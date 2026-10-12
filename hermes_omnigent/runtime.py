@@ -98,13 +98,31 @@ class Runtime:
     def state(self):
         return read(self.root / 'state.json', {'phase': 'needs-login', 'loginConfirmed': False})
 
+    def require_profile_user(self):
+        # Administrative kubectl/SSH shells can be root while Hermes itself
+        # runs as a service user. Never create 0600 state that user cannot read.
+        # A non-root service may legitimately use a root-owned writable mount.
+        if os.geteuid() != 0:
+            return
+        for path in (self.home, self.root):
+            try:
+                owner = path.stat().st_uid
+            except FileNotFoundError:
+                continue
+            except OSError:
+                raise Failure('PROFILE_UNAVAILABLE') from None
+            if owner != 0:
+                raise Failure('PROFILE_USER_MISMATCH')
+
     def save(self, **changes):
+        self.require_profile_user()
         state = {**self.state(), **changes, 'updatedAt': time.time()}
         write(self.root / 'state.json', state)
         return state
 
     @contextlib.contextmanager
     def lock(self):
+        self.require_profile_user()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         descriptor = os.open(self.root / 'operation.lock', os.O_RDWR | os.O_CREAT, 0o600)
         try:
@@ -258,6 +276,7 @@ class Runtime:
             return False
 
     def install(self):
+        self.require_profile_user()
         if self._installer:
             return self._installer()
         deps = self.discover()
@@ -325,6 +344,7 @@ class Runtime:
     def require_active(self):
         if not self.active():
             raise Failure('PLUGIN_DISABLED')
+        self.require_profile_user()
 
     def check_response(self, response):
         if not response.get('ok'):

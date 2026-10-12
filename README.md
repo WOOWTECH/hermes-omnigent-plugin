@@ -2,7 +2,7 @@
 
 讓 Hermes 透過自己的 Plugins 頁安裝 Omnigent 連線插件，啟用後開啟配對面板。每次新安裝／重新啟用都重新要求 HTTPS Server、帳號與遮罩密碼；當下存在的 Hermes／Claude Code／Codex／Pi 都必須收到實際回覆，才標記 ready。不補裝缺少的引擎。
 
-目前為 **v0.1.0-rc.2 候選版**；實機隔離與 Web 登入驗收尚未完成，請先閱讀 [驗收紀錄](docs/commercial-readiness.md)。
+目前為 **v0.1.0-rc.3 候選版**；實機隔離與 Web 登入驗收尚未完成，請先閱讀 [驗收紀錄](docs/commercial-readiness.md)。
 
 ## 從 Hermes Web 安裝
 
@@ -17,6 +17,8 @@
 ```bash
 hermes plugins install WOOWTECH/hermes-omnigent-plugin --enable
 ```
+
+CLI 安裝與上述驗收命令請使用執行 Hermes 的服務帳號。管理者以 root 操作其他使用者擁有的 profile 時，插件會在寫入前回報 `PROFILE_USER_MISMATCH`，避免建立服務讀不到的0600檔案。
 
 首次新 API 掛載仍遵循 Dashboard 重載要求。Hermes 原生啟用由 `plugins.enabled` 管理，不以安裝當作登入同意。已掛載的 API 會即時遵守停用設定，重新啟用時配對核准與回條失效。
 

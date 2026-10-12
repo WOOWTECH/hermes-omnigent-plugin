@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from hermes_omnigent.runtime import Runtime, Failure, write, read, SENTINEL
 
@@ -146,6 +147,30 @@ class RuntimeTests(unittest.TestCase):
         (self.runtime.root / 'state.json').write_text('not-json')
         with self.assertRaises(Failure):
             self.runtime.status()
+
+    def test_root_cannot_create_private_state_for_another_service_user(self):
+        original_stat = Path.stat
+        def stat(path, *args, **kwargs):
+            if path == self.home:
+                return SimpleNamespace(st_uid=10000)
+            return original_stat(path, *args, **kwargs)
+        with patch('hermes_omnigent.runtime.os.geteuid', return_value=0), patch.object(Path, 'stat', stat):
+            with self.assertRaises(Failure) as error:
+                self.pair()
+            self.assertEqual(error.exception.code, 'PROFILE_USER_MISMATCH')
+            with self.assertRaises(Failure):
+                self.runtime.start('prepare')
+            with self.assertRaises(Failure):
+                self.runtime.save(phase='needs-login')
+            with self.assertRaises(Failure):
+                self.runtime.install()
+        self.assertFalse(self.runtime.root.exists())
+        self.assertFalse(self.calls)
+
+    def test_non_root_service_can_use_a_root_owned_writable_mount(self):
+        with patch('hermes_omnigent.runtime.os.geteuid', return_value=10000):
+            self.assertTrue(self.pair()['ok'])
+        self.assertEqual(self.runtime.status()['phase'], 'ready')
 
     def test_old_running_operation_with_reused_pid_is_reported_interrupted(self):
         write(self.runtime.root / 'operation.json', {'running': True, 'pid': os.getpid(),
