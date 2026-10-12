@@ -1,6 +1,6 @@
 # Hermes Omnigent 候選版驗收紀錄
 
-版本：v0.1.0-rc.3。日期：2026-10-12 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。此候選版尚未完成指定正式環境的對話與登入 UI 驗收，不宣稱商業驗收完成。
+版本：v0.1.0-rc.4。日期：2026-10-12 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。此候選版尚未完成指定正式環境的對話驗收，不宣稱商業驗收完成。
 
 ## 已驗證
 
@@ -17,7 +17,7 @@
 - 指定容器 kernel/runtime 拒絕 Bubblewrap namespace；私有 bwrap 啟動探測退出1且回報 permission denied。只有下載執行檔不足以解除。
 - 實際 Hermes test session啟動在原生 terminal 的 sandbox 階段失敗，沒有 sentinel；停止請求也未完成。插件未標記 ready；已核驗 host/title 後清理這筆失敗測試對話。
 - 使用者需選擇保留隔離並改用支援環境，或明確允許僅插件的 Hermes 直接執行。尚未更動容器 capability、sysctl、AppArmor 或目前 host 的隔離模式。
-- Hermes Web 的登入帳密尚未提供。實際 Plugins 頁點選、正式 cookie auth、配對面板填寫、Omnigent內模型切換、實際回覆／清理與重啟持久化仍待完整驗收。
+- Hermes Web 正式 cookie auth 與 Plugins 頁停用／重新啟用已實測通過，自動配對欄位皆重新清空。完整配對、Omnigent內模型切換、實際回覆／清理與重啟持久化仍待完整驗收。
 - 一般引擎／模組選擇、skills/MCP的實際工具呼叫、Linux arm64及Hermes Desktop並未實機驗證。
 
 ## 私有相容層
@@ -39,3 +39,11 @@ Repo公開可直接下載候選原始碼；正式部署前須完成上述驗收�
 新增回歸防護：root 不得寫入其他使用者擁有的 Hermes profile／插件資料；在任何寫入前回報 `PROFILE_USER_MISMATCH`。合法的非 root 服務帳號仍可使用透過群組授權的 root-owned mount。72個Python測試與2個Dashboard測試通過。Cookie登入曾成功驗證；完整自動視窗／配對／對話流程仍需重新驗收。
 
 此站 Kubernetes Secret 與執行中容器注入的密碼設定不一致，提供的密碼也不等於該 Secret；未修改帳密或認證設定。
+
+## 原生 Web 登入與導覽驗收
+
+經使用者授權，以 Hermes 原生 profile 設定重設測試站的 Web admin 密碼；profile 僅保存 scrypt 雜湊，其他 profile 變數不變。正式公開網址的 Cookie登入已成功；`/api/plugins/hermes-omnigent/status` 回傳200，自動配對面板出現，三個登入欄位空白、密碼遮罩、直接執行預設未勾選。原生 Plugins 頁停用／重新啟用後，同樣重新要求三個欄位。密碼設定在持久化 profile；這次只重載 Dashboard，Gateway PID 維持151。帳密與雜湊未加入 repo。
+
+實測發現卡片 Open tab 因相對路徑連到 `/plugins/omnigent`。rc.4 改為宿主可直接導覽的絕對路徑 `/omnigent`。
+
+新的 Pod 與 UID10000 再次探測 namespace，仍回報 `SANDBOX_NAMESPACE_UNAVAILABLE`；沒有勾選直接執行，沒有宣稱對話驗收完成。
