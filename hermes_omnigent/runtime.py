@@ -120,6 +120,8 @@ class Runtime:
         env = dict(os.environ)
         env.update(HERMES_HOME=str(self.home), OMNIGENT_CONFIG_HOME=str(self.omni),
                    OMNIGENT_DATA_DIR=str(self.omni), OMNIGENT_HOST_NO_OPEN='1')
+        env['HERMES_OMNIGENT_PROFILE'] = str(self.home)
+        env['HERMES_OMNIGENT_PYTHON'] = env.get('HERMES_OMNIGENT_PYTHON') or sys.executable
         env['PATH'] = os.pathsep.join([str(self.root / 'bin'), str(self.root / 'bootstrap/bin'), env.get('PATH', '')])
         # An Omnigent-managed child must not donate its isolated agent home or
         # session identity to a new resident host.
@@ -260,7 +262,9 @@ class Runtime:
             from .dependencies import private_tmux
             private_tmux(self.root)
             deps = self.discover()
-        if deps.get('omnigent', {}).get('available'):
+        binary = deps.get('omnigent', {}).get('path')
+        if deps.get('omnigent', {}).get('available') and binary and Path(binary).resolve().is_relative_to(self.root / 'uv/tools'):
+            self.install_compatibility(binary)
             return deps
         env = self.environment()
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -282,7 +286,18 @@ class Runtime:
         deps = self.discover()
         if not deps.get('omnigent', {}).get('available'):
             raise Failure('OMNIGENT_MISSING')
+        self.install_compatibility(deps['omnigent']['path'])
         return deps
+
+    def install_compatibility(self, binary):
+        python = Path(binary).resolve().parent / 'python'
+        plugin = Path(__file__).resolve().parents[1]
+        env = self.environment()
+        env['PYTHONPATH'] = str(plugin)
+        result = subprocess.run([str(python), '-m', 'hermes_omnigent.compat', str(self.root), str(plugin)],
+                                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+        if result.returncode:
+            raise Failure('HERMES_COMPATIBILITY_INSTALL_FAILED')
 
     def require_active(self):
         if not self.active():

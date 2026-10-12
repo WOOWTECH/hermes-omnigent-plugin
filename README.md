@@ -34,7 +34,9 @@ Omnigent 固定下載 0.16.0，缺少 uv 時以私有 pip target 安裝 uv 0.12.
 
 原生對話需要 tmux >=3.3。已有則沿用；Debian 容器缺少時，使用容器現有已簽章 APT index 的 SHA256 從 Debian HTTPS 套件源下載，解包到插件私有目錄。函式庫搜尋只套用 tmux wrapper，不修改系統套件或其他引擎。沒有適用的套件索引或平台時，會回報需要的依賴。
 
-Hermes 自身沿用既有 provider、模型、skills、MCP 與 profile，不複製 API key 到 Omnigent 設定。缺少訂閱／供應商登入的引擎會明確驗證失敗。
+Hermes 自身使用既有 provider、模型與 profile。Omnigent 官方 per-session home 會私有複用原有 `.env`／`auth.json`，不修改來源；配對密碼不放入這些資料。缺少訂閱／供應商登入的引擎會明確驗證失敗。
+
+Omnigent0.16 的 Hermes 原生支援尚缺模型目錄／切換與 `HERMES_HOME` 路徑處理，本插件只在自己安裝的 Omnigent venv 補上這些分支。相容層要求精確0.16.0與原碼錨點，拒絕修改系統或其他插件的 Omnigent；原始碼私有備份與SHA256收據保存在插件狀態目錄。模型由 Hermes 官方 inventory 載入，只列出當前 provider 可用的識別碼；不把未登入供應商的模型混入。
 
 ## 部署驗收
 
