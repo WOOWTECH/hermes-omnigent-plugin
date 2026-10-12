@@ -1,6 +1,6 @@
 # Hermes Omnigent 候選版驗收紀錄
 
-版本：v0.1.0-rc.7。日期：2026-10-12 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
+版本：v0.1.0-rc.8。日期：2026-10-12 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
 
 指定 Hermes0.19 Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
 
@@ -12,12 +12,13 @@
 - 插件模型選單選取 `chatgpt/gpt-5.6-sol`，原生 Hermes回覆 `OMNIGENT_CONNECTION_OK`，停止請求成功。Omnigent正式網頁能看到該回覆；透過網頁文字輸入又收到 `HERMES_WEB_CHAT_OK`。
 - 同一 provider 的 `chatgpt/gpt-5.6-luna` 也收到驗證回覆且停止成功。模型目錄現在能取得該 endpoint 實際提供的13個ID。目錄不代表即時容量；不同模型可分別驗證。
 - 這次僅受控重載 Dashboard與本插件自己的Omnigent host。原有 Hermes Gateway PID保持151，容器沒有重建。
-- 79個Python回歸測試與3個Node介面契約測試。真實瀏覽器驗收另列，不計入82個自動測試。
+- 79個Python回歸測試與4個Node介面契約測試。真實瀏覽器驗收另列。
 
 - 新增「開啟已驗證的對話」入口。正式瀏覽器從插件選取Luna後，開啟同一host/model的Omnigent對話並看到真實回覆；320px無水平溢出。連結核對server、host、模型、CLI版本、確切回覆及停止回條，不會開到其他主機或模型。
 
 - 公開rc.7從原生Plugins頁再次強制重裝，實機確認ready與直接執行同意失效：登入核准false、回條清空、直接執行false，三個配對欄位重新空白。重新填寫資訊與明確勾選後，再次收到驗證回覆並恢復ready。
 - 對本插件host先查核沒有running對話，再受控停止與恢復；PID確實改變，主機重新在線，原有同意保留，恢復流程未發送模型提示。恢復後另由正式插件頁選取Luna，取得新的回覆與停止回條，狀態ready。沒有重啟Gateway。
+- rc.8 在核准的 Hermes 0.19 測試站從原生 Plugins 頁執行一般 Git pull 更新（沒有 force reinstall）；清單顯示「Omnigent 設定」，按 Open 實際進入 `/omnigent`，頁面顯示「連線與配對」及「引擎、模型與對話」兩區。更新前後 API 維持 ready、登入核准保留；沒有重配對或重啟 Gateway。
 
 ## 修復與回歸
 
