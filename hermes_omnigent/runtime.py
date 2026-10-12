@@ -464,7 +464,9 @@ class Runtime:
                     except Exception as error:
                         code = getattr(error, 'code', 'OPERATION_FAILED')
                         code = code if isinstance(code, str) and re.fullmatch(r'[A-Z_0-9]+', code) else 'OPERATION_FAILED'
-                        self.save(phase='needs-login' if code in ('NEEDS_LOGIN', 'NEEDS_BROWSER_AUTH', 'FRESH_LOGIN_REQUIRED') else 'error', issue=code)
+                        login_required = code in ('NEEDS_LOGIN', 'NEEDS_BROWSER_AUTH', 'FRESH_LOGIN_REQUIRED')
+                        self.save(phase='needs-login' if login_required else 'error', issue=code,
+                                  **({'loginConfirmed': False} if login_required else {}))
                         write(self.root / 'operation.json', {'id': identifier, 'running': False, 'ok': False, 'error': code})
                     finally:
                         inputs.clear()

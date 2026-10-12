@@ -189,6 +189,14 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaises(Failure):
             self.runtime.initialize('https://server.example', 'account', 'password', allowDirectHermes='true')
 
+    def test_expired_login_during_background_verification_requires_fresh_pairing(self):
+        self.pair()
+        self.runtime._call = lambda request: {'ok': False, 'error': {'code': 'NEEDS_LOGIN'}}
+        self.runtime.start('verify')
+        self.runtime._thread.join(2)
+        self.assertFalse(self.runtime.state()['loginConfirmed'])
+        self.assertTrue(self.runtime.status()['pairingRequired'])
+
 
 if __name__ == '__main__':
     unittest.main()

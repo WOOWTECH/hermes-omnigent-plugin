@@ -9,7 +9,7 @@
 - 新帳密透過 stdin 經插件 backend 登入測試 Omnigent；此插件獨立 host 已在線。其他容器登入及 host 不受影響。
 - 私有相容層修復 Hermes host model-options HTTP502，能取得當前 provider 真實的 `chatgpt/gpt-5.6-sol` 與 hermes-native-ui 模組。未將其他供應商模型誤列為可用。
 - Dashboard 已受控重載，Gateway PID 前後同為148；沒有重啟 Gateway/Discord。
-- 69個 Python 合約／安全測試、2個 Node Dashboard 契約測試通過。CI 對 Python3.12/3.13 執行同樣測試。
+- 70個 Python 合約／安全測試、2個 Node Dashboard 契約測試通過。CI 對 Python3.12/3.13 執行同樣測試。
 - 真實 React/Chromium 的合成 API 渲染測試，1440、360、320px均確認自動配對 overlay、空白初始登入欄位、密碼遮罩、browser storage無秘密、直接執行 opt-in 預設不勾選、模型選擇與無水平溢出。這是 UI fixture，不代表已登入正式 Hermes Web。
 
 ## 實機阻擋與待決定
