@@ -544,6 +544,7 @@ class Plugin:
             if self.process_matches(existing.get("pid"), "omnigent"):
                 if existing.get("server") != server:
                     raise PluginError("host_server_mismatch", "插件管理的 host 正連接另一個 server，請先停止該 host。")
+                self.managed_host_pid(server)
                 return "plugin"
             descriptor = os.open(self.state_dir / "host.log", os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
             with os.fdopen(descriptor, "ab") as log:

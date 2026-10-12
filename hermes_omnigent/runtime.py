@@ -21,6 +21,15 @@ SENTINEL = 'OMNIGENT_CONNECTION_OK'
 _cache = {}
 _cache_lock = threading.Lock()
 
+def process_identity(pid):
+    try:
+        text = Path(f'/proc/{pid}/stat').read_text()
+        return {'start': text[text.rfind(')') + 2:].split()[19],
+                'boot': Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
+    except (OSError, ValueError, IndexError):
+        return {}
+
+
 
 class Failure(Exception):
     def __init__(self, code):
@@ -120,6 +129,7 @@ class Runtime:
         for key in list(env):
             if key.startswith('OMNIGENT_') and any(word in key for word in ('TOKEN', 'BRIDGE', 'SESSION')):
                 env.pop(key, None)
+        env.pop('HARNESS_HERMES_NATIVE_BRIDGE_DIR', None)
         return env
 
     def discover(self):
@@ -238,7 +248,7 @@ class Runtime:
     def _thread_running(operation):
         try:
             os.kill(operation.get('pid', 0), 0)
-            return operation.get('pid', 0) > 1
+            return operation.get('pid', 0) > 1 and operation.get('identity') == process_identity(operation['pid'])
         except (OSError, TypeError):
             return False
 
@@ -264,7 +274,8 @@ class Runtime:
             uv = str(self.root / 'bootstrap/bin/uv')
         env.update(UV_TOOL_DIR=str(self.root / 'uv/tools'), UV_TOOL_BIN_DIR=str(self.root / 'bin'),
                    UV_CACHE_DIR=str(self.root / 'uv/cache'), UV_PYTHON_INSTALL_DIR=str(self.root / 'python'))
-        result = subprocess.run([uv, 'tool', 'install', '--python', '3.12', 'omnigent==0.16.0'],
+        python = sys.executable if sys.version_info >= (3, 12) else '3.12'
+        result = subprocess.run([uv, 'tool', 'install', '--python', python, 'omnigent==0.16.0'],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900, env=env)
         if result.returncode:
             raise Failure('OMNIGENT_INSTALL_FAILED')
@@ -285,6 +296,7 @@ class Runtime:
 
     def initialize(self, server, username, password):
         self.require_active()
+        previous_server = self.state().get('server')
         # Invalidate approval even when malformed URL/new credentials fail.
         write(self.root / 'verification.json', {})
         self.save(loginConfirmed=False, phase='installing', issue=None)
@@ -292,6 +304,10 @@ class Runtime:
         server = normalize_server(server)
         if not isinstance(username, str) or not username.strip() or not isinstance(password, str) or not password:
             raise Failure('FRESH_LOGIN_REQUIRED')
+        if previous_server and previous_server != server:
+            # Keep the original identity recoverable; do not rewrite a resident
+            # host's config while it still points at a different server.
+            raise Failure('DISCONNECT_BEFORE_SERVER_CHANGE')
         self.save(server=server)
         self.install()
         self.require_active()
@@ -346,11 +362,30 @@ class Runtime:
         self.save(phase='disconnecting', loginConfirmed=False)
         result = self.check_response(self.call('disconnect', server=state.get('server')))
         self.save(phase='needs-login', issue=None)
+        self.save(server=None)
         return result
+
+    def restore(self):
+        self.require_active()
+        state = self.state()
+        if not state.get('loginConfirmed') or not state.get('server'):
+            raise Failure('FRESH_LOGIN_REQUIRED')
+        self.install()
+        self.require_active()
+        self.save(phase='connecting')
+        self.check_response(self.call('connect', server=state['server'], allowManagedHost=True))
+        self.require_active()
+        # Existing evidence still binds to this host and executable version;
+        # restoration never sends another model prompt automatically.
+        self.save(phase='needs-verification')
+        current = self.status()
+        self.save(phase='ready' if current['phase'] == 'ready' else 'needs-verification')
+        return {'ok': True}
 
     def start(self, action, **inputs):
         self.require_active()
-        allowed = {'pair': self.initialize, 'verify': self.verify, 'disconnect': self.disconnect, 'prepare': self.install}
+        allowed = {'pair': self.initialize, 'verify': self.verify, 'disconnect': self.disconnect,
+                   'prepare': self.install, 'restore': self.restore}
         if action not in allowed:
             raise Failure('UNKNOWN_ACTION')
         with self._mutex:
@@ -360,10 +395,14 @@ class Runtime:
             lease.__enter__()
             identifier = uuid.uuid4().hex
             try:
-                write(self.root / 'operation.json', {'id': identifier, 'running': True, 'action': action, 'pid': os.getpid()})
+                write(self.root / 'operation.json', {'id': identifier, 'running': True, 'action': action, 'pid': os.getpid(), 'identity': process_identity(os.getpid())})
                 def work():
                     try:
+                        if action == 'prepare':
+                            self.save(phase='installing')
                         result = allowed[action](**inputs)
+                        if action == 'prepare':
+                            self.save(phase='needs-verification' if self.state().get('loginConfirmed') else 'needs-login')
                         write(self.root / 'operation.json', {'id': identifier, 'running': False, 'ok': result.get('ok', True)})
                     except Exception as error:
                         code = getattr(error, 'code', 'OPERATION_FAILED')
@@ -380,13 +419,22 @@ class Runtime:
                 raise
         return {'ok': True, 'id': identifier, 'running': True}
 
-    def activate(self):
-        if os.environ.get('OMNIGENT_HERMES_NATIVE_BRIDGE_DIR'):
+    def activate(self, prepare=False):
+        if (os.environ.get('HARNESS_HERMES_NATIVE_BRIDGE_DIR') or os.environ.get('OMNIGENT_HERMES_NATIVE_BRIDGE_DIR')):
             return
         try:
             self.lifecycle()
         except Failure:
             pass
+        if prepare and self.active():
+            try:
+                deps = self.discover()
+                if not deps.get('omnigent', {}).get('available') or not deps.get('tmux', {}).get('available'):
+                    self.start('prepare')
+                elif self.state().get('loginConfirmed') and not self.status().get('host', {}).get('connected'):
+                    self.start('restore')
+            except Failure:
+                pass
         if self._watcher:
             return
         def watch():

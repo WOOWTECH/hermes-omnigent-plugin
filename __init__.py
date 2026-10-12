@@ -11,7 +11,7 @@ from hermes_omnigent.runtime import get_runtime, Failure
 
 
 def register(ctx):
-    if os.environ.get('OMNIGENT_HERMES_NATIVE_BRIDGE_DIR'):
+    if (os.environ.get('HARNESS_HERMES_NATIVE_BRIDGE_DIR') or os.environ.get('OMNIGENT_HERMES_NATIVE_BRIDGE_DIR')):
         return
     runtime = get_runtime()
     runtime.activate()

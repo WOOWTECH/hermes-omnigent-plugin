@@ -19,7 +19,7 @@ class APITests(unittest.TestCase):
         def start(action, **inputs):
             self.jobs.append((action, inputs))
             return {'id': 'own-job', 'running': True}
-        self.fake = types.SimpleNamespace(activate=lambda: None, active=lambda: self.active,
+        self.fake = types.SimpleNamespace(activate=lambda **kwargs: None, active=lambda: self.active,
              start=start, status=lambda: {'phase': 'needs-login', 'pairingRequired': True}, reset_pairing=lambda: None)
         def require(request):
             if request.headers.get('x-hermes-token') != 'test-header':

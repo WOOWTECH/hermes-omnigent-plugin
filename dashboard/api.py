@@ -11,7 +11,7 @@ from hermes_omnigent.runtime import get_runtime, Failure
 
 router = APIRouter()
 runtime = get_runtime()
-runtime.activate()
+runtime.activate(prepare=True)
 
 
 def authorize(request):

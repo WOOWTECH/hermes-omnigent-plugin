@@ -31,7 +31,7 @@ class PluginTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('hermes_child_test', ROOT / '__init__.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        with patch.dict(os.environ, {'OMNIGENT_HERMES_NATIVE_BRIDGE_DIR': '/owned/native/bridge'}), \
+        with patch.dict(os.environ, {'HARNESS_HERMES_NATIVE_BRIDGE_DIR': '/owned/native/bridge'}), \
                 patch.object(module, 'get_runtime', side_effect=AssertionError('recursive lifecycle')):
             module.register(None)
 

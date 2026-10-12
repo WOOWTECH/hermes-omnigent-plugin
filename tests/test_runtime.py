@@ -147,6 +147,32 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaises(Failure):
             self.runtime.status()
 
+    def test_old_running_operation_with_reused_pid_is_reported_interrupted(self):
+        write(self.runtime.root / 'operation.json', {'running': True, 'pid': os.getpid(),
+                                                     'identity': {'start': 'old', 'boot': 'old'}})
+        self.runtime.save(phase='connecting')
+        state = self.runtime.status()
+        self.assertFalse(state['operation']['running'])
+        self.assertEqual(state['operation']['error'], 'OPERATION_INTERRUPTED')
+        self.assertEqual(state['phase'], 'error')
+
+    def test_changing_server_keeps_old_identity_recoverable_until_disconnect(self):
+        self.pair()
+        with self.assertRaises(Failure) as error:
+            self.runtime.initialize('https://another.example', 'account', 'password')
+        self.assertEqual(error.exception.code, 'DISCONNECT_BEFORE_SERVER_CHANGE')
+        self.assertEqual(self.runtime.state()['server'], 'https://server.example')
+        self.assertFalse(self.runtime.state()['loginConfirmed'])
+        self.runtime.disconnect()
+        self.assertIsNone(self.runtime.state()['server'])
+
+    def test_restore_restarts_approved_host_without_sending_model_prompt(self):
+        self.pair()
+        self.calls.clear()
+        self.runtime.restore()
+        self.assertFalse(any(x['action'] == 'verify' for x in self.calls))
+        self.assertEqual(self.runtime.status()['phase'], 'ready')
+
 
 if __name__ == '__main__':
     unittest.main()
