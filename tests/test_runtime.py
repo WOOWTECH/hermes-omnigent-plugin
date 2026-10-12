@@ -272,6 +272,27 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(self.runtime.state()['allowDirectHermes'])
         self.assertEqual(read(self.runtime.root / 'verification.json'), {})
 
+    def test_reinstall_cannot_reuse_approval_when_filesystem_reuses_directory_inode(self):
+        checkout = self.home / 'checkout'
+        checkout.mkdir()
+        original_stat = Path.stat
+        def reused_inode(path, *args, **kwargs):
+            if path == checkout:
+                return SimpleNamespace(st_ino=42)
+            return original_stat(path, *args, **kwargs)
+        with patch('hermes_omnigent.runtime.__file__', str(checkout / 'hermes_omnigent/runtime.py')), \
+                patch.object(Path, 'stat', reused_inode):
+            self.runtime.lifecycle()
+            self.runtime.initialize('https://server.example', 'account', 'password', allowDirectHermes=True)
+            first = self.runtime.installation_identity()
+            import shutil
+            shutil.rmtree(checkout)
+            checkout.mkdir()
+            self.runtime.lifecycle()
+            self.assertNotEqual(self.runtime.installation_identity(), first)
+            self.assertFalse(self.runtime.state()['loginConfirmed'])
+            self.assertFalse(self.runtime.state()['allowDirectHermes'])
+
     def test_expired_login_during_background_verification_requires_fresh_pairing(self):
         self.pair()
         self.runtime._call = lambda request: {'ok': False, 'error': {'code': 'NEEDS_LOGIN'}}

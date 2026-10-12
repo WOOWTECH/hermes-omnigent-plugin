@@ -6,3 +6,4 @@ __pycache__/
 release/
 .env
 .env.*
+.omnigent-installation.json

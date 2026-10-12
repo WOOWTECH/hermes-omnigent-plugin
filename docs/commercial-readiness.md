@@ -1,6 +1,6 @@
 # Hermes Omnigent 候選版驗收紀錄
 
-版本：v0.1.0-rc.6。日期：2026-10-12 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
+版本：v0.1.0-rc.7。日期：2026-10-12 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
 
 指定 Hermes0.19 Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
 
@@ -12,7 +12,7 @@
 - 插件模型選單選取 `chatgpt/gpt-5.6-sol`，原生 Hermes回覆 `OMNIGENT_CONNECTION_OK`，停止請求成功。Omnigent正式網頁能看到該回覆；透過網頁文字輸入又收到 `HERMES_WEB_CHAT_OK`。
 - 同一 provider 的 `chatgpt/gpt-5.6-luna` 也收到驗證回覆且停止成功。模型目錄現在能取得該 endpoint 實際提供的13個ID。目錄不代表即時容量；不同模型可分別驗證。
 - 這次僅受控重載 Dashboard與本插件自己的Omnigent host。原有 Hermes Gateway PID保持151，容器沒有重建。
-- 78個Python回歸測試與3個Node介面契約測試。真實瀏覽器驗收另列，不計入81個自動測試。
+- 79個Python回歸測試與3個Node介面契約測試。真實瀏覽器驗收另列，不計入82個自動測試。
 
 - 新增「開啟已驗證的對話」入口。正式瀏覽器從插件選取Luna後，開啟同一host/model的Omnigent對話並看到真實回覆；320px無水平溢出。連結核對server、host、模型、CLI版本、確切回覆及停止回條，不會開到其他主機或模型。
 
@@ -23,7 +23,7 @@
 3. Omnigent host→runner的環境白名單曾丟掉Hermes profile及直接執行旗標，造成新的TUI判定沒有供應商設定。現在只明確傳遞三個選擇器，保留既有 passthrough；不用整個`HERMES_*`前綴放行。
 4. Hermes0.19對直接設定於`model`的custom endpoint，以空金鑰探索`/models`，只留下預設ID。插件改用原生runtime provider解析與模型探索函式，在服務帳號內使用同一憑證取得替代模型。失敗時保留已設定模型，原始錯誤與憑證不輸出。
 5. 慢速host查詢期間驗證可能已完成；status在查詢後重新讀取狀態與回條，避免回傳舊的`verifying`。
-6. 原生Git強制重裝替換checkout但不一定切換enabled。生命週期監看安裝目錄身分，重新要求登入、清空驗證回條及直接執行同意，不沿用舊ready。
+6. 原生Git強制重裝替換checkout但不一定切換enabled。實測目錄inode在重裝後重用；改由checkout內0600、Git忽略的唯一識別檔監看每次安裝，重新要求登入、清空驗證回條及直接執行同意，不沿用舊ready。
 
 ## 私有相容層與資料
 
@@ -31,7 +31,7 @@
 
 供應商憑證只在Hermes服務帳號與其私有per-session home使用。配對密碼不寫入對話、插件狀態、browser storage或API驗證錯誤；登入token由Omnigent官方私有store管理。公開repo不包含帳密、token或auth雜湊。
 
-新Dashboard API在Hermes0.19需首次重載Dashboard才能掛載；不能把安裝成功誤稱API已載入。插件停用後API即時拒絕操作，重新啟用需重新配對。
+新Dashboard API或後端程式更新在Hermes0.19需重載Dashboard才能掛載；不能把安裝成功誤稱API已載入。插件停用後API即時拒絕操作，重新啟用需重新配對。
 
 ## 尚未驗收的範圍
 

@@ -225,13 +225,31 @@ class Runtime:
             return self.state()
 
     def installation_identity(self):
-        # Native force reinstall stages a new checkout before replacing the
-        # old directory. Its inode changes even when version/enable stay equal.
+        # A cross-filesystem move copies into the just-deleted target and can
+        # reuse its inode. A local, untracked marker survives restarts/updates,
+        # but is deleted by force reinstall and must receive a fresh UUID.
+        marker = Path(__file__).resolve().parents[1] / '.omnigent-installation.json'
         try:
-            info = Path(__file__).resolve().parents[1].stat()
-            return str(info.st_ino)
-        except OSError:
+            identity = read(marker).get('id')
+            if isinstance(identity, str) and re.fullmatch(r'[a-f0-9]{32}', identity):
+                return identity
+            if marker.exists():
+                return None
+        except Failure:
             return None
+        self.require_profile_user()
+        identity = uuid.uuid4().hex
+        try:
+            descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except (FileExistsError, FileNotFoundError):
+            return None  # Another initializer or an installer is in progress.
+        except OSError:
+            raise Failure('INSTALLATION_ID_UNAVAILABLE') from None
+        with os.fdopen(descriptor, 'w') as file:
+            json.dump({'id': identity}, file)
+            file.flush()
+            os.fsync(file.fileno())
+        return identity
 
     def lifecycle(self):
         active = self.active()

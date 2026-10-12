@@ -2,13 +2,13 @@
 
 讓 Hermes 透過自己的 Plugins 頁安裝 Omnigent 連線插件，啟用後開啟配對面板。每次新安裝／重新啟用都重新要求 HTTPS Server、帳號與遮罩密碼；當下存在的 Hermes／Claude Code／Codex／Pi 都必須收到實際回覆，才標記 ready。不補裝缺少的引擎。
 
-目前為 **v0.1.0-rc.6 候選版**；指定測試站已在使用者明確同意直接執行後通過真實對話驗證；其他部署環境仍需自行驗收，請先閱讀 [驗收紀錄](docs/commercial-readiness.md)。
+目前為 **v0.1.0-rc.7 候選版**；指定測試站已在使用者明確同意直接執行後通過真實對話驗證；其他部署環境仍需自行驗收，請先閱讀 [驗收紀錄](docs/commercial-readiness.md)。
 
 ## 從 Hermes Web 安裝
 
 1. 開啟 Plugins 頁，選擇 Install from Git。
 2. 輸入 `WOOWTECH/hermes-omnigent-plugin`，勾選啟用。
-3. 第一次安裝新 Dashboard API 後，Hermes 0.19 需要重載 Dashboard，再重新整理瀏覽器。這是該版本的插件 API 冷掛載限制；不要以 Gateway 重啟替代。
+3. 首次安裝或更新後端程式後，Hermes 0.19 需要重載 Dashboard，再重新整理瀏覽器。這是該版本的插件 API 冷掛載限制；不要以 Gateway 重啟替代。
 4. 配對面板自動出現。輸入你的 Server、帳號與遮罩密碼。
 5. 等待依賴下載、主機連線與實際對話驗證；成功後從 Omnigent 頁選擇引擎與模型，按「開啟已驗證的對話」，直接到同一主機與所選模型的 Omnigent 對話。此對話保留健康檢查歷史，後續可繼續輸入訊息。
 
@@ -20,7 +20,7 @@ hermes plugins install WOOWTECH/hermes-omnigent-plugin --enable
 
 CLI 安裝與上述驗收命令請使用執行 Hermes 的服務帳號。管理者以 root 操作其他使用者擁有的 profile 時，插件會在寫入前回報 `PROFILE_USER_MISMATCH`，避免建立服務讀不到的0600檔案。
 
-首次新 API 掛載仍遵循 Dashboard 重載要求。Hermes 原生啟用由 `plugins.enabled` 管理，不以安裝當作登入同意。已掛載的 API 會即時遵守停用設定，重新啟用或 Git 強制重裝時配對核准、回條及直接執行同意失效。安裝目錄身分改變會被生命週期監看辨識。
+首次新 API 掛載仍遵循 Dashboard 重載要求。Hermes 原生啟用由 `plugins.enabled` 管理，不以安裝當作登入同意。已掛載的 API 會即時遵守停用設定，重新啟用或 Git 強制重裝時配對核准、回條及直接執行同意失效。每次安裝由 checkout 中不納入 Git 的唯一識別檔辨識，不依賴可能重用的 inode。
 
 ## 操作
 
