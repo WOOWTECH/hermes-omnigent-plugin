@@ -2,7 +2,7 @@
   "name": "hermes-omnigent",
   "label": "Omnigent",
   "description": "Pair this Hermes with Omnigent and verify existing engines.",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0-rc.2",
   "icon": "Link",
   "tab": {
     "path": "omnigent",

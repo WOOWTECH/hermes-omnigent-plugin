@@ -30,6 +30,9 @@
       busy = current.operation?.running === true;
       emit();
     } catch (_) {
+      current = null;
+      busy = false;
+      dismissed = false;
       failure = '配對介面尚未載入，或目前登入無法存取。首次安裝請重載 Hermes Dashboard，再重新整理頁面。';
       emit();
     }
@@ -103,6 +106,7 @@
     const state = useRuntime();
     const [pair, setPair] = useState(false), [catalog, setCatalog] = useState(null);
     const [engine, setEngine] = useState(''), [model, setModel] = useState(''), [error, setError] = useState('');
+    useEffect(() => { if (!state?.enabled) setPair(false); }, [state?.enabled]);
     const engineData = catalog?.engines?.[engine];
     async function act(path, data) {
       setError('');
@@ -146,7 +150,7 @@
         h('div', {className: 'og-engines'}, ...(state?.installedEngines || []).map(key => h('div', {className: 'og-engine', key},
           h('strong', null, key), h('span', null, state.verification?.[key]?.ok ? '實際對話已驗證' : '尚未通過對話驗證'))))),
       error ? h('p', {role: 'alert', className: 'og-error'}, error) : null,
-      pair ? h('div', {className: 'og-modal'}, h(PairForm, {close: () => setPair(false)})) : null);
+      pair && state?.enabled ? h('div', {className: 'og-modal'}, h(PairForm, {close: () => setPair(false)})) : null);
   }
   function Overlay() {
     const state = useRuntime();
