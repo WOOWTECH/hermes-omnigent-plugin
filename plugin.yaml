@@ -1,0 +1,12 @@
+name: hermes-omnigent
+version: "0.1.0"
+description: "Pair Hermes and existing native engines with Omnigent using fresh secure onboarding."
+author: WOOWTECH
+kind: standalone
+provides_tools:
+  - omnigent_status
+  - omnigent_catalog
+  - omnigent_verify
+  - omnigent_open
+provides_hooks:
+  - on_session_start

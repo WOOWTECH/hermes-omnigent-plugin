@@ -1,0 +1,82 @@
+"""Download a private tmux from the image's signed Debian package index."""
+import hashlib
+import os
+from pathlib import Path
+import platform
+import shlex
+import shutil
+import subprocess
+import tempfile
+import urllib.request
+
+LIBRARIES = {
+    'libevent_core-2.1.so.7': ('libevent-core-2.1-7t64', 'libevent-core-2.1-7'),
+    'libjemalloc.so.2': ('libjemalloc2',), 'libsystemd.so.0': ('libsystemd0',),
+    'libtinfo.so.6': ('libtinfo6',), 'libcap.so.2': ('libcap2',),
+    'libgcrypt.so.20': ('libgcrypt20',), 'libgpg-error.so.0': ('libgpg-error0',),
+    'liblz4.so.1': ('liblz4-1',), 'libzstd.so.1': ('libzstd1',),
+    'liblzma.so.5': ('liblzma5',),
+}
+
+
+def private_tmux(root):
+    from .runtime import Failure, write
+    release = Path('/etc/os-release').read_text() if Path('/etc/os-release').exists() else ''
+    if 'ID=debian' not in release or not all(shutil.which(x) for x in ('apt-cache', 'dpkg-deb', 'ldd')):
+        raise Failure('TMUX_REQUIRED')
+    if platform.machine() not in ('x86_64', 'aarch64'):
+        raise Failure('UNSUPPORTED_PLATFORM')
+    native = root / 'native'
+    native.mkdir(parents=True, exist_ok=True, mode=0o700)
+    libraries = native / 'usr/lib' / ('x86_64-linux-gnu' if platform.machine() == 'x86_64' else 'aarch64-linux-gnu')
+    receipts = []
+    def download(names):
+        for name in names:
+            result = subprocess.run(['apt-cache', 'show', name], capture_output=True, text=True, timeout=20)
+            paragraphs = result.stdout.split('\n\n')
+            metadata = next((dict(line.split(': ', 1) for line in part.splitlines() if ': ' in line and not line.startswith(' '))
+                             for part in paragraphs if '\nSHA256: ' in part), None)
+            if not metadata:
+                continue
+            filename, checksum = metadata.get('Filename', ''), metadata.get('SHA256', '')
+            if not filename.startswith('pool/') or '..' in filename.split('/') or len(checksum) != 64:
+                raise Failure('DEPENDENCY_METADATA_INVALID')
+            url = 'https://deb.debian.org/debian/' + filename
+            with urllib.request.urlopen(url, timeout=60) as response:
+                data = response.read(20_000_001)
+            if len(data) > 20_000_000 or hashlib.sha256(data).hexdigest() != checksum:
+                raise Failure('DEPENDENCY_HASH_MISMATCH')
+            fd, temporary = tempfile.mkstemp(suffix='.deb', dir=native)
+            try:
+                with os.fdopen(fd, 'wb') as file:
+                    file.write(data)
+                extraction = subprocess.run(['dpkg-deb', '-x', temporary, str(native)],
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+                if extraction.returncode:
+                    raise Failure('TMUX_EXTRACT_FAILED')
+            finally:
+                os.unlink(temporary)
+            receipts.append({'name': name, 'version': metadata.get('Version'), 'sha256': checksum, 'url': url})
+            return
+        raise Failure('TMUX_PACKAGE_MISSING')
+    download(('tmux',))
+    env = {**os.environ, 'LD_LIBRARY_PATH': str(libraries)}
+    for _ in range(5):
+        result = subprocess.run(['ldd', str(native / 'usr/bin/tmux')], env=env, capture_output=True, text=True, timeout=10)
+        missing = [line.strip().split()[0] for line in result.stdout.splitlines() if 'not found' in line]
+        if not missing:
+            break
+        for library in missing:
+            if library not in LIBRARIES:
+                raise Failure('TMUX_LIBRARY_UNSUPPORTED')
+            download(LIBRARIES[library])
+    probe = subprocess.run([str(native / 'usr/bin/tmux'), '-V'], env=env, capture_output=True, timeout=10)
+    if probe.returncode:
+        raise Failure('TMUX_RUNTIME_FAILED')
+    (root / 'bin').mkdir(exist_ok=True, mode=0o700)
+    wrapper = root / 'bin/tmux'
+    # Library search is scoped to tmux, preserving the other engines' runtime.
+    wrapper.write_text('#!/bin/sh\nexport LD_LIBRARY_PATH=' + shlex.quote(str(libraries)) +
+                       '\nexec ' + shlex.quote(str(native / 'usr/bin/tmux')) + ' "$@"\n')
+    wrapper.chmod(0o700)
+    write(root / 'native-dependencies.json', {'source': 'image signed APT index', 'packages': receipts})
