@@ -650,6 +650,23 @@ class Plugin:
                 raise PluginError("host_disconnect_timeout", "本機登入已清除，但 server 尚未確認此 host 離線；請檢查 supervisor。")
             self.sleep(2)
 
+    def restart_host(self) -> dict:
+        server = self.server()
+        if self.local_host().get('managerRunning'):
+            raise PluginError('external_host_manager', '此 host 由外部管理器管理，插件不會重啟它。')
+        pid = self.managed_host_pid(server)
+        if pid:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            deadline = self.clock() + 15
+            while self.process_matches(pid, 'omnigent'):
+                if self.clock() >= deadline:
+                    raise PluginError('host_restart_timeout', '插件 host 尚未停止，請查看狀態再重試。')
+                self.sleep(0.2)
+        return {'stopped': bool(pid), 'credentialsRetained': True}
+
     @staticmethod
     def assistant_sentinel(items: object) -> bool:
         if not isinstance(items, list):
@@ -745,7 +762,7 @@ class Plugin:
         if self.clock() >= deadline:
             raise PluginError("verify_timeout", "取得 host 與模型清單已超過驗證等待時間，尚未建立測試對話。")
         body = {"agent_id": engine["agentId"], "host_id": catalog["host"]["id"], "workspace": str(self.workspace),
-                "title": f"Pi Web connection check · {key}", "harness_override": ENGINES[key]["harness"]}
+                "title": f"Hermes Omnigent connection check · {key}", "harness_override": ENGINES[key]["harness"]}
         if selected:
             body["model_override"] = selected
         if key == "claude":
@@ -812,7 +829,7 @@ def dispatch(request: dict, **dependencies) -> dict:
     if not isinstance(request, dict):
         raise PluginError("invalid_request", "請提供 JSON object。")
     action = request.get("action")
-    if action not in ("status", "catalog", "connect", "verify", "disconnect"):
+    if action not in ("status", "catalog", "connect", "verify", "disconnect", "restart_host"):
         raise PluginError("invalid_action", "不支援此 Omnigent 操作。")
     plugin = Plugin(request, **dependencies)
     try:

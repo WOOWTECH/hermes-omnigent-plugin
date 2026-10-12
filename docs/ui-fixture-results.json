@@ -1,0 +1,32 @@
+[
+  {
+    "width": 1440,
+    "automaticPairingOverlay": true,
+    "maskedPassword": true,
+    "noStorageSecrets": true,
+    "uncheckedExecutionOptIn": true,
+    "modelSelection": true,
+    "horizontalOverflow": false,
+    "pageErrors": 0
+  },
+  {
+    "width": 360,
+    "automaticPairingOverlay": true,
+    "maskedPassword": true,
+    "noStorageSecrets": true,
+    "uncheckedExecutionOptIn": true,
+    "modelSelection": true,
+    "horizontalOverflow": false,
+    "pageErrors": 0
+  },
+  {
+    "width": 320,
+    "automaticPairingOverlay": true,
+    "maskedPassword": true,
+    "noStorageSecrets": true,
+    "uncheckedExecutionOptIn": true,
+    "modelSelection": true,
+    "horizontalOverflow": false,
+    "pageErrors": 0
+  }
+]

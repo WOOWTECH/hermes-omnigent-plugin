@@ -14,3 +14,5 @@
 .og-chip { display:inline-block;border-radius:12px;padding:8px 12px;background:#f4f5f7; }.og-root .og-note { font-size:14px; }.og-root .og-error { color:#994848; }.og-link { display:inline-block;color:#4865be;min-height:44px;padding:10px 0;text-decoration:underline; }
 .og-selectors { display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:end; }.og-engines { display:grid;gap:12px;margin-top:20px; }.og-engine { display:flex;justify-content:space-between;gap:16px;padding:12px;border-bottom:1px solid #eef0f4; }.og-engine span { color:var(--og-muted); }
 @media(max-width:600px) { .og-page { padding:24px 16px; }.og-card,.og-pair { padding:20px; }.og-selectors { grid-template-columns:1fr; }.og-actions button { width:100%; }.og-engine { flex-direction:column;gap:4px; } }
+
+.og-root input[type=checkbox] { width:24px;min-height:24px;accent-color:var(--og-blue); }.og-sandbox-note { background:#f4f5f7;border-radius:12px;padding:16px; }.og-sandbox-note label { display:flex;gap:12px;align-items:flex-start; }

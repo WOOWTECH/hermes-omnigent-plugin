@@ -2,7 +2,7 @@
 from pathlib import Path
 import sys
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool
 
 root = str(Path(__file__).resolve().parents[1])
 if root not in sys.path:
@@ -33,6 +33,7 @@ class PairRequest(BaseModel):
     server: str = Field(min_length=1, max_length=2048)
     username: str = Field(min_length=1, max_length=256)
     password: SecretStr
+    allowDirectHermes: StrictBool = False
 
 
 class VerifyRequest(BaseModel):
@@ -68,7 +69,7 @@ async def pair(request: Request):
     except Exception:
         raise HTTPException(400, detail='INVALID_PAIRING_REQUEST') from None
     return perform(runtime.start, 'pair', server=values.server, username=values.username,
-                   password=values.password.get_secret_value())
+                   password=values.password.get_secret_value(), allowDirectHermes=values.allowDirectHermes)
 
 
 @router.get('/catalog')

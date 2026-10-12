@@ -1,15 +1,15 @@
 """Exact source transformations of Omnigent0.16 in the plugin-owned venv."""
 from pathlib import Path
 
-MARKER = '# hermes-omnigent-plugin compatibility v1'
+MARKER = '# hermes-omnigent-plugin compatibility v2'
 
 
-def make_edits(sdk):
+def make_edits(sdk, source_overrides=None):
     from .runtime import Failure
     edits = []
     def change(relative, transform):
         file = Path(sdk) / relative
-        original = file.read_text()
+        original = (source_overrides or {}).get(file, file.read_text())
         if MARKER in original:
             edits.append((file, original, original))
             return
@@ -46,9 +46,21 @@ def make_edits(sdk):
         anchor = '    hermes_args = [*(launch_config.terminal_launch_args or [])]\n'
         if source.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
-        return source.replace(anchor, anchor + '''    if launch_config.model_override and not any(arg == "--model" or arg.startswith("--model=") for arg in hermes_args):
+        source = source.replace(anchor, anchor + '''    if launch_config.model_override and not any(arg == "--model" or arg.startswith("--model=") for arg in hermes_args):
         hermes_args.extend(["--model", launch_config.model_override])
 ''')
+        start = source.index('async def _auto_create_hermes_terminal(')
+        end = source.index('\nasync def ', start + 1)
+        section = source[start:end]
+        anchor = '            os_env=OSEnvSpec(type="caller_process", cwd=workspace),\n'
+        if section.count(anchor) != 1:
+            raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
+        section = section.replace('from omnigent.inner.datamodel import OSEnvSpec, TerminalEnvSpec',
+            'from omnigent.inner.datamodel import OSEnvSpec, TerminalEnvSpec, OSEnvSandboxSpec')
+        section = section.replace(anchor, '''            os_env=OSEnvSpec(type="caller_process", cwd=workspace,
+                sandbox=OSEnvSandboxSpec(type="none") if os.environ.get("HERMES_OMNIGENT_DIRECT_HERMES") == "1" else None),
+''')
+        return source[:start] + section + source[end:]
 
     def runner(source):
         anchor = '        if body_type == "model_change":\n            harness = _session_harness_name(conversation_id)\n'

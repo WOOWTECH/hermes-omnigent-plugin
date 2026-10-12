@@ -2,6 +2,8 @@
 
 讓 Hermes 透過自己的 Plugins 頁安裝 Omnigent 連線插件，啟用後開啟配對面板。每次新安裝／重新啟用都重新要求 HTTPS Server、帳號與遮罩密碼；當下存在的 Hermes／Claude Code／Codex／Pi 都必須收到實際回覆，才標記 ready。不補裝缺少的引擎。
 
+目前為 **v0.1.0-rc.1 候選版**；實機隔離與 Web 登入驗收尚未完成，請先閱讀 [驗收紀錄](docs/commercial-readiness.md)。
+
 ## 從 Hermes Web 安裝
 
 1. 開啟 Plugins 頁，選擇 Install from Git。
@@ -28,15 +30,23 @@ hermes plugins install WOOWTECH/hermes-omnigent-plugin --enable
 
 ## 執行環境與依賴
 
-Linux x64／arm64，Python >=3.11，Hermes Agent 插件 API 與 Dashboard SDK 1.1。開發以已部署的 Hermes 0.19 為合約基準。
+Linux x64／arm64，Python >=3.11，Hermes Agent 插件 API 與 Dashboard SDK 1.1。此版本目前是待實機完整驗收的候選版。開發以已部署的 Hermes 0.19 為合約基準。
 
 Omnigent 固定下載 0.16.0，缺少 uv 時以私有 pip target 安裝 uv 0.12.10。Omnigent/Python/uv 放在 `$HERMES_HOME/omnigent-plugin`，保留現有工具版本。
 
-原生對話需要 tmux >=3.3。已有則沿用；Debian 容器缺少時，使用容器現有已簽章 APT index 的 SHA256 從 Debian HTTPS 套件源下載，解包到插件私有目錄。函式庫搜尋只套用 tmux wrapper，不修改系統套件或其他引擎。沒有適用的套件索引或平台時，會回報需要的依賴。
+原生對話需要 tmux >=3.3 與符合既有 sandbox 政策的 bubblewrap。已有則沿用；Debian 容器缺少時，使用容器現有已簽章 APT index 的 SHA256 從 Debian HTTPS 套件源下載，解包到插件私有目錄。函式庫搜尋只套用 private native wrapper，不修改系統套件或其他引擎。舊索引引用已移除套件時，只在插件目錄更新官方簽章索引。沒有適用的套件索引或平台時，會回報需要的依賴。
 
 Hermes 自身使用既有 provider、模型與 profile。Omnigent 官方 per-session home 會私有複用原有 `.env`／`auth.json`，不修改來源；配對密碼不放入這些資料。缺少訂閱／供應商登入的引擎會明確驗證失敗。
 
 Omnigent0.16 的 Hermes 原生支援尚缺模型目錄／切換與 `HERMES_HOME` 路徑處理，本插件只在自己安裝的 Omnigent venv 補上這些分支。相容層要求精確0.16.0與原碼錨點，拒絕修改系統或其他插件的 Omnigent；原始碼私有備份與SHA256收據保存在插件狀態目錄。模型由 Hermes 官方 inventory 載入，只列出當前 provider 可用的識別碼；不把未登入供應商的模型混入。
+
+### 容器隔離能力
+
+安裝先探測 Bubblewrap namespace。容器不支援時，停止在配對面板並顯示具體原因；不更動 sysctl、Pod capability、AppArmor 或 sandbox 政策。
+
+預設保留隔離。若使用者明確勾選「允許 Hermes 直接執行」，只將此插件的 Hermes 原生對話設為 `sandbox=none`，沿用該容器原本檔案／網路權限；其他引擎的隔離不變。勾選不是預設，也不是模型工具可傳入的欄位；新登入／重新啟用要重新選擇。已執行的 host 模式維持到取消連結或受控重新載入。
+
+首次更新相容層／執行模式時，插件核驗 PID、server、UID 與設定目錄，只重新載入自己管理的 host，保留登入。外部管理器的 host 不會被插件重啟。
 
 ## 部署驗收
 

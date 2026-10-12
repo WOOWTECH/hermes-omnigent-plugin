@@ -122,6 +122,7 @@ class Runtime:
                    OMNIGENT_DATA_DIR=str(self.omni), OMNIGENT_HOST_NO_OPEN='1')
         env['HERMES_OMNIGENT_PROFILE'] = str(self.home)
         env['HERMES_OMNIGENT_PYTHON'] = env.get('HERMES_OMNIGENT_PYTHON') or sys.executable
+        env['HERMES_OMNIGENT_DIRECT_HERMES'] = '1' if self.state().get('allowDirectHermes') is True else '0'
         env['PATH'] = os.pathsep.join([str(self.root / 'bin'), str(self.root / 'bootstrap/bin'), env.get('PATH', '')])
         # An Omnigent-managed child must not donate its isolated agent home or
         # session identity to a new resident host.
@@ -139,7 +140,7 @@ class Runtime:
             return self._find()
         env = self.environment()
         result = {}
-        for name in (*ENGINES, 'omnigent', 'uv', 'tmux'):
+        for name in (*ENGINES, 'omnigent', 'uv', 'tmux', 'bwrap'):
             binary = shutil.which(name, path=env['PATH'])
             if not binary:
                 result[name] = {'available': False, 'path': None}
@@ -209,6 +210,7 @@ class Runtime:
                 if not active or previous.get('nativeActive') is False:
                     write(self.root / 'verification.json', {})
                     self.save(phase='needs-login', loginConfirmed=False, issue=None)
+                    self.save(allowDirectHermes=False)
                 self.save(nativeActive=active)
         return active
 
@@ -244,7 +246,8 @@ class Runtime:
                 'pairingRequired': active and state.get('loginConfirmed') is not True,
                 'server': state.get('server'), 'host': host, 'installedEngines': installed,
                 'engines': {name: {**deps.get(name, {}), **data.get('engines', {}).get(name, {})} for name in ENGINES},
-                'verification': receipts, 'operation': operation, 'issue': state.get('issue')}
+                'verification': receipts, 'operation': operation, 'issue': state.get('issue'),
+                'sandbox': read(self.root / 'sandbox.json'), 'allowDirectHermes': state.get('allowDirectHermes') is True}
 
     @staticmethod
     def _thread_running(operation):
@@ -262,6 +265,11 @@ class Runtime:
             from .dependencies import private_tmux
             private_tmux(self.root)
             deps = self.discover()
+        if not deps.get('bwrap', {}).get('available'):
+            from .dependencies import private_tmux
+            private_tmux(self.root, tool='bwrap')
+            deps = self.discover()
+        self.check_sandbox(deps)
         binary = deps.get('omnigent', {}).get('path')
         if deps.get('omnigent', {}).get('available') and binary and Path(binary).resolve().is_relative_to(self.root / 'uv/tools'):
             self.install_compatibility(binary)
@@ -289,6 +297,21 @@ class Runtime:
         self.install_compatibility(deps['omnigent']['path'])
         return deps
 
+    def check_sandbox(self, dependencies):
+        binary = dependencies.get('bwrap', {}).get('path')
+        if not binary:
+            raise Failure('BUBBLEWRAP_REQUIRED')
+        try:
+            probe = subprocess.run([binary, '--ro-bind', '/', '/', '--proc', '/proc', '--dev', '/dev',
+                                    '--unshare-user', '--uid', '0', '--gid', '0', '/bin/true'],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, env=self.environment())
+            supported = probe.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            supported = False
+        write(self.root / 'sandbox.json', {'namespaceSupported': supported, 'checkedAt': time.time()})
+        if not supported and self.state().get('allowDirectHermes') is not True:
+            raise Failure('SANDBOX_NAMESPACE_UNAVAILABLE')
+
     def install_compatibility(self, binary):
         python = Path(binary).resolve().parent / 'python'
         plugin = Path(__file__).resolve().parents[1]
@@ -309,12 +332,14 @@ class Runtime:
             raise Failure(code if isinstance(code, str) and re.fullmatch(r'[A-Z_0-9]+', code) else 'OPERATION_FAILED')
         return response.get('data') or {}
 
-    def initialize(self, server, username, password):
+    def initialize(self, server, username, password, allowDirectHermes=False):
         self.require_active()
         previous_server = self.state().get('server')
         # Invalidate approval even when malformed URL/new credentials fail.
         write(self.root / 'verification.json', {})
-        self.save(loginConfirmed=False, phase='installing', issue=None)
+        if not isinstance(allowDirectHermes, bool):
+            raise Failure('INVALID_EXECUTION_MODE')
+        self.save(loginConfirmed=False, phase='installing', issue=None, allowDirectHermes=allowDirectHermes)
         from .adapter import normalize_server
         server = normalize_server(server)
         if not isinstance(username, str) or not username.strip() or not isinstance(password, str) or not password:
@@ -327,7 +352,9 @@ class Runtime:
         self.install()
         self.require_active()
         self.save(phase='connecting')
+        self.ensure_host_generation(server)
         self.check_response(self.call('connect', server=server, username=username, password=password, allowManagedHost=True))
+        self.save_host_generation()
         password = None
         self.require_active()
         self.save(loginConfirmed=True, phase='needs-verification')
@@ -388,7 +415,9 @@ class Runtime:
         self.install()
         self.require_active()
         self.save(phase='connecting')
+        self.ensure_host_generation(state['server'])
         self.check_response(self.call('connect', server=state['server'], allowManagedHost=True))
+        self.save_host_generation()
         self.require_active()
         # Existing evidence still binds to this host and executable version;
         # restoration never sends another model prompt automatically.
@@ -396,6 +425,19 @@ class Runtime:
         current = self.status()
         self.save(phase='ready' if current['phase'] == 'ready' else 'needs-verification')
         return {'ok': True}
+
+    def host_generation(self):
+        from .patches import MARKER
+        return {'generation': MARKER, 'allowDirectHermes': self.state().get('allowDirectHermes') is True}
+
+    def ensure_host_generation(self, server):
+        previous = read(self.root / 'host-runtime.json')
+        process = read(self.root / 'host-process.json')
+        if process.get('pid') and previous != self.host_generation():
+            self.check_response(self.call('restart_host', server=server))
+
+    def save_host_generation(self):
+        write(self.root / 'host-runtime.json', self.host_generation())
 
     def start(self, action, **inputs):
         self.require_active()
@@ -444,7 +486,9 @@ class Runtime:
         if prepare and self.active():
             try:
                 deps = self.discover()
-                if not deps.get('omnigent', {}).get('available') or not deps.get('tmux', {}).get('available'):
+                from .patches import MARKER
+                compatibility = read(self.root / 'compatibility.json')
+                if not deps.get('omnigent', {}).get('available') or not deps.get('tmux', {}).get('available') or compatibility.get('generation') != MARKER:
                     self.start('prepare')
                 elif self.state().get('loginConfirmed') and not self.status().get('host', {}).get('connected'):
                     self.start('restore')

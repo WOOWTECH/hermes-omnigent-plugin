@@ -2,10 +2,15 @@
   "name": "hermes-omnigent",
   "label": "Omnigent",
   "description": "Pair this Hermes with Omnigent and verify existing engines.",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.1",
   "icon": "Link",
-  "tab": { "path": "omnigent", "position": "after:plugins" },
-  "slots": ["overlay"],
+  "tab": {
+    "path": "omnigent",
+    "position": "after:plugins"
+  },
+  "slots": [
+    "overlay"
+  ],
   "entry": "dist/index.js",
   "css": "dist/style.css",
   "api": "api.py"

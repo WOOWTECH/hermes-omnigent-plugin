@@ -57,6 +57,7 @@
     const [server, setServer] = useState('');
     const [account, setAccount] = useState('');
     const [password, setPassword] = useState('');
+    const [allowDirectHermes, setDirect] = useState(false);
     const [error, setError] = useState('');
     const [sending, setSending] = useState(false);
     const passwordInput = useRef(null);
@@ -72,7 +73,7 @@
       setPassword('');
       if (passwordInput.current) passwordInput.current.value = '';
       try {
-        await request('/pair', {server: server.trim(), username: account.trim(), password: secret});
+        await request('/pair', {server: server.trim(), username: account.trim(), password: secret, allowDirectHermes});
         dismissed = true; await refresh(); close();
       } catch (_) {
         setError('配對未啟動；請確認插件已啟用、登入有效，且沒有其他操作執行中。密碼請重新輸入。');
@@ -87,6 +88,9 @@
       h('label', null, '帳號', h('input', {required: true, value: account, autoComplete: 'username', onChange: e => setAccount(e.target.value)})),
       h('label', null, '密碼', h('input', {ref: passwordInput, type: 'password', required: true, value: password,
         autoComplete: 'current-password', onChange: e => setPassword(e.target.value)})),
+      current?.sandbox?.namespaceSupported === false ? h('div', {className: 'og-sandbox-note'},
+        h('p', null, '這個容器不支援 Bubblewrap namespace。你可以換到支援隔離的環境，或明確允許此插件的 Hermes 對話直接在容器執行。'),
+        h('label', null, h('input', {type: 'checkbox', checked: allowDirectHermes, onChange: e => setDirect(e.target.checked)}), '允許 Hermes 直接執行：這些對話不使用 Bubblewrap 隔離，沿用容器的檔案與網路權限。')) : null,
       h('p', {className: 'og-note'}, '密碼只用於本次登入，提交後即清空；不寫入聊天或插件狀態。'),
       error ? h('p', {role: 'alert', className: 'og-error'}, error) : null,
       h('div', {className: 'og-actions'}, h('button', {type: 'submit', disabled: sending || busy}, sending ? '正在開始配對…' : '開始配對'),

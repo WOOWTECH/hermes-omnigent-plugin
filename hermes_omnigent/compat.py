@@ -51,8 +51,25 @@ def install_private(root, plugin_root, python):
     if not sdk.is_relative_to(root / 'uv/tools'):
         raise Failure('COMPAT_REQUIRES_PRIVATE_RUNTIME')
     from . import patches
-    edits = patches.make_edits(sdk)
+    from .runtime import read
+    previous = read(root / 'compatibility.json')
     backup = root / 'compat-originals'
+    originals = {}
+    for row in previous.get('files', []):
+        file = sdk / row['file']
+        if not file.resolve().is_relative_to(sdk):
+            raise Failure('COMPAT_SOURCE_CHANGED')
+        actual = file.read_bytes()
+        if hashlib.sha256(actual).hexdigest() != row.get('sha256'):
+            raise Failure('COMPAT_SOURCE_CHANGED')
+        if b'hermes-omnigent-plugin compatibility' in actual and patches.MARKER.encode() not in actual:
+            original = backup / row['file'].replace('/', '__')
+            if not original.is_file():
+                raise Failure('COMPAT_BACKUP_MISSING')
+            originals[file] = original.read_text()
+    # Validate and compile the complete proposed upgrade before changing any
+    # SDK file. A failed later anchor leaves the previous generation intact.
+    edits = patches.make_edits(sdk, source_overrides=originals)
     backup.mkdir(mode=0o700, exist_ok=True)
     receipts = []
     for file, original, patched in edits:
@@ -60,14 +77,14 @@ def install_private(root, plugin_root, python):
         if not target.exists():
             target.write_text(original)
             target.chmod(0o600)
-        if original != patched:
+        if file.read_text() != patched:
             file.write_text(patched)
         receipts.append({'file': str(file.relative_to(sdk)), 'sha256': hashlib.sha256(patched.encode()).hexdigest()})
     # Normal and isolated Python subprocesses both process the private venv's
     # site .pth files. No global site-packages or caller workspace is changed.
     site = sdk.parent
     (site / 'hermes_omnigent_plugin.pth').write_text('import sys; sys.path.insert(0, ' + repr(str(plugin_root)) + ')\n')
-    write(root / 'compatibility.json', {'version': '0.16.0', 'privateOnly': True, 'files': receipts})
+    write(root / 'compatibility.json', {'version': '0.16.0', 'generation': patches.MARKER, 'privateOnly': True, 'files': receipts})
 
 
 if __name__ == '__main__':

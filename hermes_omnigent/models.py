@@ -3,6 +3,8 @@ import json
 import os
 
 os.environ['HERMES_HOME'] = os.environ['HERMES_OMNIGENT_PROFILE']
+from hermes_cli.config import load_env
+os.environ.update(load_env())
 from hermes_cli.inventory import load_picker_context, build_models_payload
 
 context = load_picker_context()

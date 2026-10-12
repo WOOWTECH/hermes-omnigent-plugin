@@ -173,6 +173,22 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(any(x['action'] == 'verify' for x in self.calls))
         self.assertEqual(self.runtime.status()['phase'], 'ready')
 
+    def test_namespace_failure_cannot_enable_direct_execution_implicitly(self):
+        failed = type('Probe', (), {'returncode': 1})()
+        with patch('hermes_omnigent.runtime.subprocess.run', return_value=failed):
+            with self.assertRaises(Failure) as error:
+                self.runtime.check_sandbox({'bwrap': {'path': '/private/bwrap'}})
+        self.assertEqual(error.exception.code, 'SANDBOX_NAMESPACE_UNAVAILABLE')
+        self.assertNotEqual(self.runtime.environment()['HERMES_OMNIGENT_DIRECT_HERMES'], '1')
+
+    def test_direct_execution_requires_boolean_user_input_and_resets_on_new_login(self):
+        self.runtime.initialize('https://server.example', 'account', 'password', allowDirectHermes=True)
+        self.assertEqual(self.runtime.environment()['HERMES_OMNIGENT_DIRECT_HERMES'], '1')
+        self.pair()
+        self.assertEqual(self.runtime.environment()['HERMES_OMNIGENT_DIRECT_HERMES'], '0')
+        with self.assertRaises(Failure):
+            self.runtime.initialize('https://server.example', 'account', 'password', allowDirectHermes='true')
+
 
 if __name__ == '__main__':
     unittest.main()

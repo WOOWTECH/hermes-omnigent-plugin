@@ -59,7 +59,7 @@ class APITests(unittest.TestCase):
         response = self.client.post(self.url + '/pair', json=values, headers=self.headers)
         self.assertEqual(response.status_code, 200)
         self.assertNotIn('ephemeral-secret', response.text)
-        self.assertEqual(self.jobs, [('pair', values)])
+        self.assertEqual(self.jobs, [('pair', {**values, 'allowDirectHermes': False})])
 
     def test_busy_returns_safe_code_without_raw_exception(self):
         def fail(*args, **kwargs):
@@ -68,6 +68,12 @@ class APITests(unittest.TestCase):
         response = self.client.post(self.url + '/verify', json={}, headers=self.headers)
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()['detail'], 'OPERATION_BUSY')
+
+    def test_execution_opt_in_cannot_be_coerced_from_a_string(self):
+        values = {'server': 'https://server.example', 'username': 'user', 'password': 'secret', 'allowDirectHermes': 'true'}
+        response = self.client.post(self.url + '/pair', json=values, headers=self.headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(self.jobs)
 
 
 if __name__ == '__main__':
