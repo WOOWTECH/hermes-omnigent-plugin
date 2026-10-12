@@ -214,6 +214,64 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaises(Failure):
             self.runtime.initialize('https://server.example', 'account', 'password', allowDirectHermes='true')
 
+    def test_real_sdk_runner_receives_profile_and_explicit_execution_mode(self):
+        from omnigent.host.connect import _build_runner_env
+        model = {'default': 'configured-model', 'provider': 'custom'}
+        (self.home / 'config.yaml').write_text(json.dumps({'model': model}))
+        for approved in (False, True):
+            with self.subTest(approved=approved):
+                self.runtime.save(allowDirectHermes=approved)
+                with patch.dict(os.environ, {'OMNIGENT_RUNNER_ENV_PASSTHROUGH': 'EXISTING_SELECTOR',
+                                             'EXISTING_SELECTOR': 'keep-me',
+                                             'UNRELATED_SECRET': 'never-forward'}):
+                    base = self.runtime.environment()
+                with patch('omnigent.onboarding.provider_config.load_config', return_value={}):
+                    child = _build_runner_env(base, server_url='https://server.example',
+                        runner_id='test-runner', binding_token='test-binding', workspace=str(self.home),
+                        parent_pid=os.getpid(), harness='hermes-native')
+                self.assertEqual(child.get('EXISTING_SELECTOR'), 'keep-me')
+                self.assertNotIn('UNRELATED_SECRET', child)
+                self.assertEqual(child.get('HERMES_OMNIGENT_PROFILE'), str(self.home))
+                self.assertEqual(child.get('HERMES_OMNIGENT_DIRECT_HERMES'), '1' if approved else '0')
+                self.assertEqual(child.get('HERMES_OMNIGENT_PYTHON'), base['HERMES_OMNIGENT_PYTHON'])
+
+    def test_old_host_environment_is_restarted_before_restore(self):
+        self.pair()
+        write(self.runtime.root / 'host-process.json', {'pid': 123})
+        previous = self.runtime.host_generation()
+        previous.pop('runnerEnvironmentVersion', None)
+        write(self.runtime.root / 'host-runtime.json', previous)
+        self.calls.clear()
+        self.runtime.restore()
+        self.assertEqual([x['action'] for x in self.calls].count('restart_host'), 1)
+        self.assertFalse(any(x['action'] == 'verify' for x in self.calls))
+
+    def test_status_refreshes_receipts_after_slow_host_lookup(self):
+        self.pair()
+        completed = read(self.runtime.root / 'verification.json')
+        self.runtime.save(phase='verifying')
+        write(self.runtime.root / 'verification.json', {})
+        original = self.runtime._call
+        def finish_during_lookup(request):
+            if request['action'] == 'status':
+                write(self.runtime.root / 'verification.json', completed)
+                self.runtime.save(phase='ready')
+            return original(request)
+        self.runtime._call = finish_during_lookup
+        self.assertEqual(self.runtime.status()['phase'], 'ready')
+
+    def test_force_reinstall_requires_fresh_login_and_execution_consent(self):
+        with patch.object(self.runtime, 'installation_identity', return_value='first-install', create=True):
+            self.runtime.lifecycle()
+            self.runtime.initialize('https://server.example', 'account', 'password', allowDirectHermes=True)
+            self.runtime.lifecycle()
+            self.assertEqual(self.runtime.status()['phase'], 'ready')
+        with patch.object(self.runtime, 'installation_identity', return_value='replacement-install', create=True):
+            self.runtime.lifecycle()
+        self.assertTrue(self.runtime.status()['pairingRequired'])
+        self.assertFalse(self.runtime.state()['allowDirectHermes'])
+        self.assertEqual(read(self.runtime.root / 'verification.json'), {})
+
     def test_expired_login_during_background_verification_requires_fresh_pairing(self):
         self.pair()
         self.runtime._call = lambda request: {'ok': False, 'error': {'code': 'NEEDS_LOGIN'}}

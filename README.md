@@ -2,7 +2,7 @@
 
 讓 Hermes 透過自己的 Plugins 頁安裝 Omnigent 連線插件，啟用後開啟配對面板。每次新安裝／重新啟用都重新要求 HTTPS Server、帳號與遮罩密碼；當下存在的 Hermes／Claude Code／Codex／Pi 都必須收到實際回覆，才標記 ready。不補裝缺少的引擎。
 
-目前為 **v0.1.0-rc.4 候選版**；實機隔離與對話驗收尚未完成，請先閱讀 [驗收紀錄](docs/commercial-readiness.md)。
+目前為 **v0.1.0-rc.5 候選版**；指定測試站已在使用者明確同意直接執行後通過真實對話驗證；其他部署環境仍需自行驗收，請先閱讀 [驗收紀錄](docs/commercial-readiness.md)。
 
 ## 從 Hermes Web 安裝
 
@@ -20,7 +20,7 @@ hermes plugins install WOOWTECH/hermes-omnigent-plugin --enable
 
 CLI 安裝與上述驗收命令請使用執行 Hermes 的服務帳號。管理者以 root 操作其他使用者擁有的 profile 時，插件會在寫入前回報 `PROFILE_USER_MISMATCH`，避免建立服務讀不到的0600檔案。
 
-首次新 API 掛載仍遵循 Dashboard 重載要求。Hermes 原生啟用由 `plugins.enabled` 管理，不以安裝當作登入同意。已掛載的 API 會即時遵守停用設定，重新啟用時配對核准與回條失效。
+首次新 API 掛載仍遵循 Dashboard 重載要求。Hermes 原生啟用由 `plugins.enabled` 管理，不以安裝當作登入同意。已掛載的 API 會即時遵守停用設定，重新啟用或 Git 強制重裝時配對核准、回條及直接執行同意失效。安裝目錄身分改變會被生命週期監看辨識。
 
 ## 操作
 
@@ -32,7 +32,7 @@ CLI 安裝與上述驗收命令請使用執行 Hermes 的服務帳號。管理�
 
 ## 執行環境與依賴
 
-Linux x64／arm64，Python >=3.11，Hermes Agent 插件 API 與 Dashboard SDK 1.1。此版本目前是待實機完整驗收的候選版。開發以已部署的 Hermes 0.19 為合約基準。
+Linux x64／arm64，Python >=3.11，Hermes Agent 插件 API 與 Dashboard SDK 1.1。指定測試站已驗證登入、配對、模型選擇與真實對話；其他平台仍是候選支援。開發以已部署的 Hermes 0.19 為合約基準。
 
 Omnigent 固定下載 0.16.0，缺少 uv 時以私有 pip target 安裝 uv 0.12.10。Omnigent/Python/uv 放在 `$HERMES_HOME/omnigent-plugin`，保留現有工具版本。
 
@@ -40,7 +40,7 @@ Omnigent 固定下載 0.16.0，缺少 uv 時以私有 pip target 安裝 uv 0.12.
 
 Hermes 自身使用既有 provider、模型與 profile。Omnigent 官方 per-session home 會私有複用原有 `.env`／`auth.json`，不修改來源；配對密碼不放入這些資料。缺少訂閱／供應商登入的引擎會明確驗證失敗。
 
-Omnigent0.16 的 Hermes 原生支援尚缺模型目錄／切換與 `HERMES_HOME` 路徑處理，本插件只在自己安裝的 Omnigent venv 補上這些分支。相容層要求精確0.16.0與原碼錨點，拒絕修改系統或其他插件的 Omnigent；原始碼私有備份與SHA256收據保存在插件狀態目錄。模型由 Hermes 官方 inventory 載入，只列出當前 provider 可用的識別碼；不把未登入供應商的模型混入。
+Omnigent0.16 的 Hermes 原生支援尚缺模型目錄／切換與 `HERMES_HOME` 路徑處理，本插件只在自己安裝的 Omnigent venv 補上這些分支。相容層要求精確0.16.0與原碼錨點，拒絕修改系統或其他插件的 Omnigent；原始碼私有備份與SHA256收據保存在插件狀態目錄。模型由 Hermes 官方 inventory 載入，只列出當前 provider 的識別碼。對直接設定於 `model` 的 custom endpoint，使用原生 runtime provider 憑證解析與 `/models` 探索，避免原生空金鑰探測只顯示預設模型。清單保留供應商提供的替代模型；模型滿載時可手動選擇另一個模型再驗證。模型出現在清單不代表當下容量或所有工具功能已通過。
 
 ### 容器隔離能力
 

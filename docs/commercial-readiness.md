@@ -1,49 +1,41 @@
 # Hermes Omnigent 候選版驗收紀錄
 
-版本：v0.1.0-rc.4。日期：2026-10-12 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。此候選版尚未完成指定正式環境的對話驗收，不宣稱商業驗收完成。
+版本：v0.1.0-rc.5。日期：2026-10-12 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
 
-## 已驗證
+指定 Hermes0.19 Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
 
-- 原生 Hermes plugin 安裝函式從公開 GitHub repo 下載、辨識 manifest 並啟用成功。
-- 私有 Omnigent0.16.0、tmux、bubblewrap 安裝完成；沒有安裝或更新 Hermes／Claude Code／Codex／Pi。指定容器只有 Hermes0.19.0。
-- 首次新帳密透過 stdin 經插件 backend 登入測試 Omnigent；當時確認此插件獨立 host 在線。其他容器登入及 host 不受影響。
-- 私有相容層修復 Hermes host model-options HTTP502，能取得當前 provider 真實的 `chatgpt/gpt-5.6-sol` 與 hermes-native-ui 模組。未將其他供應商模型誤列為可用。
-- Dashboard 已受控重載，Gateway PID 前後同為148；沒有重啟 Gateway/Discord。
-- 72個 Python 合約／安全測試、2個 Node Dashboard 契約測試通過。CI 對 Python3.12/3.13 執行同樣測試。
-- 真實 React/Chromium 的合成 API 渲染測試，1440、360、320px均確認自動配對 overlay、空白初始登入欄位、密碼遮罩、browser storage無秘密、停用／認證失效後三個登入欄位全部清除、直接執行 opt-in 預設不勾選、模型選擇與無水平溢出。這是 UI fixture，不代表已登入正式 Hermes Web。
+## 實機結果
 
-## 實機阻擋與待決定
+- 真正 Hermes Web Cookie登入與原生 Plugins頁的公開 Git 安裝、停用／啟用、Open tab導覽已驗證。初始配對網址、帳號、密碼均空白，密碼遮罩；直接執行預設不勾選。
+- 本容器仍拒絕 Bubblewrap namespace。使用者明確同意後，從正式配對面板勾選直接執行並重新輸入 Omnigent登入資料；此選項只影響本插件私有 SDK 啟動的 Hermes，保留現有容器與 UID10000。
+- 本插件 host 在線。只連結現有 Hermes，沒有下載缺少的 Claude Code／Codex／Pi。
+- 插件模型選單選取 `chatgpt/gpt-5.6-sol`，原生 Hermes回覆 `OMNIGENT_CONNECTION_OK`，停止請求成功。Omnigent正式網頁能看到該回覆；透過網頁文字輸入又收到 `HERMES_WEB_CHAT_OK`。
+- 同一 provider 的 `chatgpt/gpt-5.6-luna` 也收到驗證回覆且停止成功。模型目錄現在能取得該 endpoint 實際提供的13個ID。目錄不代表即時容量；不同模型可分別驗證。
+- 這次僅受控重載 Dashboard與本插件自己的Omnigent host。原有 Hermes Gateway PID保持151，容器沒有重建。
+- 78個Python回歸測試與2個Node介面契約測試。真實瀏覽器驗收另列，不計入80個自動測試。
 
-- 指定容器 kernel/runtime 拒絕 Bubblewrap namespace；私有 bwrap 啟動探測退出1且回報 permission denied。只有下載執行檔不足以解除。
-- 實際 Hermes test session啟動在原生 terminal 的 sandbox 階段失敗，沒有 sentinel；停止請求也未完成。插件未標記 ready；已核驗 host/title 後清理這筆失敗測試對話。
-- 使用者需選擇保留隔離並改用支援環境，或明確允許僅插件的 Hermes 直接執行。尚未更動容器 capability、sysctl、AppArmor 或目前 host 的隔離模式。
-- Hermes Web 正式 cookie auth 與 Plugins 頁停用／重新啟用已實測通過，自動配對欄位皆重新清空。完整配對、Omnigent內模型切換、實際回覆／清理與重啟持久化仍待完整驗收。
-- 一般引擎／模組選擇、skills/MCP的實際工具呼叫、Linux arm64及Hermes Desktop並未實機驗證。
+## 修復與回歸
 
-## 私有相容層
+1. root 管理終端曾建立服務帳號無法讀取的0600狀態。只調整本插件 checkout／私有資料的擁有者；新增 `PROFILE_USER_MISMATCH` 寫入前防護，不放寬檔案權限。
+2. Plugins卡片相對tab路徑曾導到`/plugins/omnigent`；改成宿主絕對路徑`/omnigent`。
+3. Omnigent host→runner的環境白名單曾丟掉Hermes profile及直接執行旗標，造成新的TUI判定沒有供應商設定。現在只明確傳遞三個選擇器，保留既有 passthrough；不用整個`HERMES_*`前綴放行。
+4. Hermes0.19對直接設定於`model`的custom endpoint，以空金鑰探索`/models`，只留下預設ID。插件改用原生runtime provider解析與模型探索函式，在服務帳號內使用同一憑證取得替代模型。失敗時保留已設定模型，原始錯誤與憑證不輸出。
+5. 慢速host查詢期間驗證可能已完成；status在查詢後重新讀取狀態與回條，避免回傳舊的`verifying`。
+6. 原生Git強制重裝替換checkout但不一定切換enabled。生命週期監看安裝目錄身分，重新要求登入、清空驗證回條及直接執行同意，不沿用舊ready。
 
-Omnigent0.16的原生Hermes實作缺少host/session模型目錄、模型事件、模型 launch override，且設定與登入資料路徑寫死為`~/.hermes`。本插件只對自己uv venv的4個SDK檔案套用已編譯／錨點驗證的相容改動；保存原始碼備份及 SHA256/generation 回條。不同SDK版本、非插件私有SDK、已被其他程式修改的來源都拒絕處理。
+## 私有相容層與資料
 
-Hermes供應商API資料只由原生Hermes inventory解析並回傳白名單model IDs。SDK的per-session home按原生流程複用`.env`及`auth.json`，仍是私有資料；不修改來源。Omnigent帳密不寫入聊天、工具參數、browser storage或狀態檔。
+私有Omnigent固定0.16.0，測試server為0.17.0。Hermes原生支援的模型目錄／模型事件／launch override及profile路徑由插件在自己的uv venv補上。只修改4個SDK檔案，先驗證版本、原碼錨點及編譯；保留原碼備份、SHA256與generation回條。非私有SDK、不同版本或被其他程式修改的來源皆拒絕。
 
-新 Dashboard API 在 Hermes0.19只於啟動掛載。第一次安裝後需重載 Dashboard並重新整理；此版本無法完全省略這個宿主要求。單純 install/enable 不能誤稱 API 已掛載。
+供應商憑證只在Hermes服務帳號與其私有per-session home使用。配對密碼不寫入對話、插件狀態、browser storage或API驗證錯誤；登入token由Omnigent官方私有store管理。公開repo不包含帳密、token或auth雜湊。
 
-## 下載與狀態
+新Dashboard API在Hermes0.19需首次重載Dashboard才能掛載；不能把安裝成功誤稱API已載入。插件停用後API即時拒絕操作，重新啟用需重新配對。
 
-Repo公開可直接下載候選原始碼；正式部署前須完成上述驗收。候選版不預設移除隔離，並會在缺少namespace時先回報`SANDBOX_NAMESPACE_UNAVAILABLE`，避免建立已知不能啟動的測試對話。
+## 尚未驗收的範圍
 
-## 2026-10-12 權限修復
+- 支援Bubblewrap的環境、Linux arm64及Hermes Desktop。
+- 目前不存在於測試容器的Claude Code、Codex、Pi，以及其他供應商。
+- MCP／skills的模型實際工具呼叫、所有13個模型的工具／圖片能力、多人併發與長時間負載。
+- 完整Pod重建復原。僅插件自有host重連可另行驗證；不以整個Gateway重啟替代。
 
-實機 Dashboard／Gateway 使用 UID10000；先前管理終端以 root 建立的插件私有狀態是0600，導致正式 Cookie登入後 `/status` 回傳400 `INVALID_STATE`，自動配對視窗無法讀取狀態。用 UID10000 重現此錯誤後，只移交本插件 checkout 與私有資料的擁有者，服務帳號狀態讀取已恢復。沒有放寬檔案權限，也沒有更動其他插件或 Gateway。
-
-新增回歸防護：root 不得寫入其他使用者擁有的 Hermes profile／插件資料；在任何寫入前回報 `PROFILE_USER_MISMATCH`。合法的非 root 服務帳號仍可使用透過群組授權的 root-owned mount。72個Python測試與2個Dashboard測試通過。Cookie登入曾成功驗證；完整自動視窗／配對／對話流程仍需重新驗收。
-
-此站 Kubernetes Secret 與執行中容器注入的密碼設定不一致，提供的密碼也不等於該 Secret；未修改帳密或認證設定。
-
-## 原生 Web 登入與導覽驗收
-
-經使用者授權，以 Hermes 原生 profile 設定重設測試站的 Web admin 密碼；profile 僅保存 scrypt 雜湊，其他 profile 變數不變。正式公開網址的 Cookie登入已成功；`/api/plugins/hermes-omnigent/status` 回傳200，自動配對面板出現，三個登入欄位空白、密碼遮罩、直接執行預設未勾選。原生 Plugins 頁停用／重新啟用後，同樣重新要求三個欄位。密碼設定在持久化 profile；這次只重載 Dashboard，Gateway PID 維持151。帳密與雜湊未加入 repo。
-
-實測發現卡片 Open tab 因相對路徑連到 `/plugins/omnigent`。rc.4 改為宿主可直接導覽的絕對路徑 `/omnigent`。
-
-新的 Pod 與 UID10000 再次探測 namespace，仍回報 `SANDBOX_NAMESPACE_UNAVAILABLE`；沒有勾選直接執行，沒有宣稱對話驗收完成。
+此版本預設保留Bubblewrap。明確opt-in只跳過Hermes內層沙箱；不修改Pod capability、sysctl、AppArmor、host namespace或k3s設定。

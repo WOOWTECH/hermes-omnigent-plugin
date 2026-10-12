@@ -141,6 +141,11 @@ class Runtime:
         env['HERMES_OMNIGENT_PROFILE'] = str(self.home)
         env['HERMES_OMNIGENT_PYTHON'] = env.get('HERMES_OMNIGENT_PYTHON') or sys.executable
         env['HERMES_OMNIGENT_DIRECT_HERMES'] = '1' if self.state().get('allowDirectHermes') is True else '0'
+        # The SDK filters host->runner environments, including zygote forks.
+        # Forward these selectors explicitly; never opt in all HERMES_* vars.
+        passthrough = {name.strip() for name in env.get('OMNIGENT_RUNNER_ENV_PASSTHROUGH', '').split(',') if name.strip()}
+        passthrough.update(('HERMES_OMNIGENT_PROFILE', 'HERMES_OMNIGENT_PYTHON', 'HERMES_OMNIGENT_DIRECT_HERMES'))
+        env['OMNIGENT_RUNNER_ENV_PASSTHROUGH'] = ','.join(sorted(passthrough))
         env['PATH'] = os.pathsep.join([str(self.root / 'bin'), str(self.root / 'bootstrap/bin'), env.get('PATH', '')])
         # An Omnigent-managed child must not donate its isolated agent home or
         # session identity to a new resident host.
@@ -219,17 +224,29 @@ class Runtime:
             self.save(phase='needs-login', loginConfirmed=False, issue=None, pairingId=uuid.uuid4().hex)
             return self.state()
 
+    def installation_identity(self):
+        # Native force reinstall stages a new checkout before replacing the
+        # old directory. Its inode changes even when version/enable stay equal.
+        try:
+            info = Path(__file__).resolve().parents[1].stat()
+            return str(info.st_ino)
+        except OSError:
+            return None
+
     def lifecycle(self):
         active = self.active()
         state = self.state()
-        if state.get('nativeActive') != active:
+        installation = self.installation_identity()
+        changed = installation is not None and state.get('installationId') != installation
+        if state.get('nativeActive') != active or changed:
             with self.lock():
                 previous = self.state()
-                if not active or previous.get('nativeActive') is False:
+                changed = installation is not None and previous.get('installationId') != installation
+                if not active or previous.get('nativeActive') is False or changed:
                     write(self.root / 'verification.json', {})
                     self.save(phase='needs-login', loginConfirmed=False, issue=None)
                     self.save(allowDirectHermes=False)
-                self.save(nativeActive=active)
+                self.save(nativeActive=active, **({'installationId': installation} if installation is not None else {}))
         return active
 
     def receipt_ok(self, receipt, state, host_id, dependency):
@@ -241,9 +258,12 @@ class Runtime:
         active = self.active()
         state = self.state()
         deps = self.discover()
-        receipts = read(self.root / 'verification.json')
         installed = [name for name in ENGINES if deps.get(name, {}).get('available')]
         response = self.call('status', **({'server': state['server']} if state.get('server') else {})) if active and deps.get('omnigent', {}).get('available') else {}
+        # Host/model lookups can take seconds. A verification may complete
+        # during that request; use its final local state and receipt together.
+        state = self.state()
+        receipts = read(self.root / 'verification.json')
         data = response.get('data') or {}
         host = data.get('host') or {'connected': False}
         ready = (active and state.get('loginConfirmed') is True and response.get('ok') is True
@@ -448,7 +468,8 @@ class Runtime:
 
     def host_generation(self):
         from .patches import MARKER
-        return {'generation': MARKER, 'allowDirectHermes': self.state().get('allowDirectHermes') is True}
+        return {'generation': MARKER, 'allowDirectHermes': self.state().get('allowDirectHermes') is True,
+                'runnerEnvironmentVersion': 1}
 
     def ensure_host_generation(self, server):
         previous = read(self.root / 'host-runtime.json')
