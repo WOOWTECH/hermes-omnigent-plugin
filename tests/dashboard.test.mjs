@@ -15,6 +15,16 @@ test('registers the native Dashboard tab and overlay in the actual SDK argument 
   assert.equal(typeof slots[0][2], 'function');
 });
 
+test('declares an Omnigent settings page that Hermes can open from Plugins', () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../dashboard/manifest.json', import.meta.url), 'utf8'));
+  assert.equal(manifest.name, 'hermes-omnigent');
+  assert.equal(manifest.label, 'Omnigent 設定');
+  assert.equal(manifest.tab.path, '/omnigent');
+  assert.equal(manifest.tab.position, 'after:plugins');
+  assert.equal(manifest.version, '0.1.0-rc.8');
+  assert.match(source, /h\('h1', null, 'Omnigent 設定'\)/);
+});
+
 test('pairing secrets use masked inputs and stay out of browser persistence and error logs', () => {
   assert.match(source, /type: 'password'/);
   assert.match(source, /setPassword\(''\)/);

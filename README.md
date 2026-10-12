@@ -2,7 +2,7 @@
 
 讓 Hermes 透過自己的 Plugins 頁安裝 Omnigent 連線插件，啟用後開啟配對面板。每次新安裝／重新啟用都重新要求 HTTPS Server、帳號與遮罩密碼；當下存在的 Hermes／Claude Code／Codex／Pi 都必須收到實際回覆，才標記 ready。不補裝缺少的引擎。
 
-目前為 **v0.1.0-rc.7 候選版**；指定測試站已在使用者明確同意直接執行後通過真實對話驗證；其他部署環境仍需自行驗收，請先閱讀 [驗收紀錄](docs/commercial-readiness.md)。
+目前為 **v0.1.0-rc.8 候選版**；指定測試站已在使用者明確同意直接執行後通過真實對話驗證；其他部署環境仍需自行驗收，請先閱讀 [驗收紀錄](docs/commercial-readiness.md)。
 
 ## 從 Hermes Web 安裝
 
@@ -11,6 +11,8 @@
 3. 首次安裝或更新後端程式後，Hermes 0.19 需要重載 Dashboard，再重新整理瀏覽器。這是該版本的插件 API 冷掛載限制；不要以 Gateway 重啟替代。
 4. 配對面板自動出現。輸入你的 Server、帳號與遮罩密碼。
 5. 等待依賴下載、主機連線與實際對話驗證；成功後從 Omnigent 頁選擇引擎與模型，按「開啟已驗證的對話」，直接到同一主機與所選模型的 Omnigent 對話。此對話保留健康檢查歷史，後續可繼續輸入訊息。
+
+配對視窗關閉後，進入 **Plugins → Omnigent 設定 → Open** 可再次開啟持續設定頁，管理連線、重新配對、現有引擎、模型及對話驗證。
 
 公開 repo 不需要 GitHub token。CLI 也能安裝：
 
@@ -24,7 +26,7 @@ CLI 安裝與上述驗收命令請使用執行 Hermes 的服務帳號。管理�
 
 ## 操作
 
-- Hermes 的 Omnigent 頁：重新配對、取消連結、實際對話驗證、模型／模組清單與 Omnigent 連結。
+- Hermes 的 **Omnigent 設定**分頁（Plugins 頁按 **Open**）：重新配對、取消連結、實際對話驗證、模型／模組清單與 Omnigent 連結。
 - `/omnigent status`、`/omnigent catalog`、`/omnigent verify`、`/omnigent open`、`/omnigent setup`。
 - 模型工具 `omnigent_status`、`omnigent_catalog`、`omnigent_verify`、`omnigent_open`。工具沒有密碼／帳號欄位；登入只能透過配對面板。
 
