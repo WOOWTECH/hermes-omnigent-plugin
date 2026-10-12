@@ -16,6 +16,9 @@
 
 - 新增「開啟已驗證的對話」入口。正式瀏覽器從插件選取Luna後，開啟同一host/model的Omnigent對話並看到真實回覆；320px無水平溢出。連結核對server、host、模型、CLI版本、確切回覆及停止回條，不會開到其他主機或模型。
 
+- 公開rc.7從原生Plugins頁再次強制重裝，實機確認ready與直接執行同意失效：登入核准false、回條清空、直接執行false，三個配對欄位重新空白。重新填寫資訊與明確勾選後，再次收到驗證回覆並恢復ready。
+- 對本插件host先查核沒有running對話，再受控停止與恢復；PID確實改變，主機重新在線，原有同意保留，恢復流程未發送模型提示。恢復後另由正式插件頁選取Luna，取得新的回覆與停止回條，狀態ready。沒有重啟Gateway。
+
 ## 修復與回歸
 
 1. root 管理終端曾建立服務帳號無法讀取的0600狀態。只調整本插件 checkout／私有資料的擁有者；新增 `PROFILE_USER_MISMATCH` 寫入前防護，不放寬檔案權限。
@@ -38,6 +41,6 @@
 - 支援Bubblewrap的環境、Linux arm64及Hermes Desktop。
 - 目前不存在於測試容器的Claude Code、Codex、Pi，以及其他供應商。
 - MCP／skills的模型實際工具呼叫、所有13個模型的工具／圖片能力、多人併發與長時間負載。
-- 完整Pod重建復原。僅插件自有host重連可另行驗證；不以整個Gateway重啟替代。
+- 完整Pod重建復原。插件自有host重連已驗證；不以整個Gateway重啟替代。
 
 此版本預設保留Bubblewrap。明確opt-in只跳過Hermes內層沙箱；不修改Pod capability、sysctl、AppArmor、host namespace或k3s設定。
