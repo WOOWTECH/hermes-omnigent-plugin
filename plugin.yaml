@@ -1,5 +1,5 @@
 name: hermes-omnigent
-version: "0.1.0-rc.5"
+version: "0.1.0-rc.6"
 description: "Pair Hermes and existing native engines with Omnigent using fresh secure onboarding."
 author: WOOWTECH
 kind: standalone

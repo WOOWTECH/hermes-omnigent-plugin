@@ -16,6 +16,21 @@
       return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash ? url.href : null;
     } catch (_) { return null; }
   }
+  function verifiedChatURL(state, engine, model) {
+    const receipt = state?.verification?.[engine];
+    if (!model || state?.phase !== 'ready' || state?.host?.connected !== true || receipt?.ok !== true
+        || receipt.reply !== 'OMNIGENT_CONNECTION_OK' || receipt.cleanup !== 'stopped'
+        || receipt.model !== model || receipt.hostId !== state.host.id || receipt.server !== state.server
+        || receipt.cliVersion !== state.engines?.[engine]?.version || typeof receipt.sessionId !== 'string') return null;
+    try {
+      const server = safeServer(state.server);
+      if (!server) return null;
+      const base = new URL(server), url = new URL(receipt.url);
+      const path = base.pathname.replace(/\/$/, '') + '/c/' + encodeURIComponent(receipt.sessionId);
+      return url.origin === base.origin && url.pathname === path && !url.search && !url.hash
+        && !url.username && !url.password ? url.href : null;
+    } catch (_) { return null; }
+  }
   async function request(path, body) {
     return sdk.fetchJSON(endpoint + path, body === undefined ? undefined : {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
@@ -124,6 +139,7 @@
       } catch (_) { setError('目前無法取得模型與模組，請先完成配對。'); }
     }
     const server = safeServer(state?.server);
+    const chat = verifiedChatURL(state, engine, model);
     return h('section', {className: 'og-root og-page'},
       h('div', {className: 'og-eyebrow'}, 'WOOWTECH · OMNIGENT'), h('h1', null, '讓 Hermes 接上你的 Omnigent'),
       h('p', null, '一個入口，連結這個環境的原生引擎，選擇模型並打開對話。'),
@@ -146,7 +162,8 @@
             ...(state?.installedEngines || []).map(key => h('option', {key, value: key}, key + ' · ' + (catalog.engines[key]?.agentId ? '模組可用' : '等待模組'))))),
           h('label', null, '模型', h('select', {value: model, onChange: e => setModel(e.target.value)},
             h('option', {value: ''}, '沿用原生引擎設定'), ...(engineData?.models || []).map(item => h('option', {key: item.id, value: item.id}, item.displayName || item.id)))),
-          button('驗證所選模型', () => act('/verify', {engine, ...(model ? {model} : {})}), busy || !engine)) : null,
+          button('驗證所選模型', () => act('/verify', {engine, ...(model ? {model} : {})}), busy || !engine),
+          chat ? h('a', {href: chat, target: '_blank', rel: 'noopener noreferrer', className: 'og-link'}, '開啟已驗證的對話') : null) : null,
         h('div', {className: 'og-engines'}, ...(state?.installedEngines || []).map(key => h('div', {className: 'og-engine', key},
           h('strong', null, key), h('span', null, state.verification?.[key]?.ok ? '實際對話已驗證' : '尚未通過對話驗證'))))),
       error ? h('p', {role: 'alert', className: 'og-error'}, error) : null,
