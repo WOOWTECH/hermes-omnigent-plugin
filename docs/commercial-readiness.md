@@ -2,7 +2,7 @@
 
 版本：v0.1.0-rc.10 候選版。驗收更新：2026-10-25 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
 
-指定 Hermes0.19 Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
+指定主站 Hermes 0.22.5／Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
 
 ## rc.10 追加驗收
 
@@ -11,7 +11,19 @@
 - 第二站 Hermes 包裝 CLI 冷啟動查版本量得 11.56 秒，超過原 8／10 秒期限。插件與私有 SDK 的 Hermes 探測改為 30 秒，同一輪共用 Hermes 別名探測結果；其他引擎期限與版本條件保持原值。
 - 原始對話失敗與停止失敗分別保存安全錯誤碼，設定頁顯示對應處理說明；不再讓停止失敗覆蓋真正的啟動錯誤。
 - 本機模型的原生設定需要原 profile 的受擁有權保護 runtime 狀態。新增 native helper 只解析原 profile 已擁有的 loopback 推論服務，將連線資料透過私有 pipe 交給對話設定；不複製程序身分、重啟原服務或為每個對話載入模型。雲端 provider 不經此 helper。
-- 現場正在重新驗收第二站模型回覆與工具；未完成項目不可視為已通過。
+- rc.10 公開 main `e97ffb7` 的 140 項 Python 與 6 項介面測試，以及 GitHub CI Python 3.12／3.13／3.14 均通過。兩站由正式 Plugins Git pull 更新，HTTP 200、checkout 乾淨、登入與直接執行同意保留；SDK 與 host generation v17 一致。主站再次執行 `acceptance --chat`：exit 0、ready。
+- 第二站原生啟動與停止已恢復，並建立私有 Gateway／SQLite 對話資料。本機 Qwen 的直接 API 測試在停用 thinking 時於 0.79 秒回覆正確；預設 thinking 的 80 token 有界測試耗時 3.72 秒、達到輸出上限且未給出最終答案。完整 Hermes 對話仍等待模型輸出而逾時，停止成功；不能將這台標示 ready，工具流程仍未通過。
+- 同一平台管理者擁有的既有 LiteLLM Gateway 可供接回第二站，已確認 Sol／Luna 存在。從 Kubernetes 注入環境取得的管理認證對建立專用金鑰回覆 401；未取得成功建立回條，檢查指定 alias 時無金鑰，未改第二站模型設定。非標準程序環境憑證探查被自動核准審查拒絕，已停止並要求提供正式專用推論憑證來源。
+
+### rc.10 後續現場驗證
+
+- 主站以正常 Omnigent 網頁登入，收到全新識別字的一般回覆、terminal `pwd` 回覆及 MCP 回覆；服務端確認 `terminal`、`tool_describe`、`tool_call` 皆實際執行，MCP 結果含本測試對話 ID，error 數為 0。
+- 停止本測試對話並確認專用 Gateway 已退出後，僅將其對話及 home 目錄設成 `0770` 重現 PVC 群組權限情境。從網頁恢復同一對話，正確回憶前次 terminal 回覆識別字；四層插件目錄皆恢復 `0700`，再次停止成功。
+- 第二站單一測試對話使用 `--reasoning none`，186.98 秒後仍未收到指定回覆，停止成功；不能把關閉思考模式當成已解決。
+- 第二站測試期間遭外部 rollout 重建（14:03 與 14:10 UTC），一次工具範圍比較因此中斷、exit 143；不計為通過或插件故障。新 Pod 的既有配對／直接執行同意仍在，SDK 與 host generation v17 一致。
+- 重跑第二站 `--reasoning none --toolsets terminal` 比較，183.20 秒後仍為 `REPLY_TIMEOUT`，取得停止回條。前次遭 rollout 中斷、尚未送出使用者訊息的驗證對話也已按 ID／host／標題核對並停止，專用 Gateway 不再執行。
+- 第二站當時 cgroup CPU 上限為 2 核、記憶體上限 6 GiB，已有 CPU throttling；模型服務提供 4 個 slot，各自 context 上限 262144。完整 Hermes 測試期間確實觀察到模型正在處理 prompt、尚無 decoded token。這些是效能診斷證據，尚不足以證明限流或 context 設定就是逾時根因；未變更共用模型服務設定。
+- 最後狀態查核：主站 `ready`、第二站 `needs-verification`／`INCOMPLETE_CHAT_VERIFICATION`；兩站 host 皆在線。第二站保持原有本機模型設定，未因最小 API 測試成功而誤標完整對話通過。
 
 ## 2026-10-25 重新驗收
 
@@ -27,7 +39,7 @@
 | Luna 正式 UI 驗證 | 從設定頁選取 `chatgpt/gpt-5.6-luna`，實際回覆與停止皆成功 |
 | Omnigent 對話入口 | 開啟正確對話；正常登入後能看到真實驗證回覆 |
 | 後續網頁對話／工具／MCP | 已收到全新識別字的續聊回覆；`terminal` 執行 `pwd`，Omnigent `tool_describe`／`tool_call` 讀取本測試對話，服務端工具回條與輸出皆存在；持久化與跨節點重建後，再以 Sol 完成網頁回覆、terminal、明確指定名稱的 MCP 工具呼叫，回條包含本測試對話 ID 且無 error 項目 |
-| 截圖測試站 782fd73d | 插件已配對、host 在線；原生 Hermes 缺少有效模型 provider 憑證，尚不能驗收實際對話 |
+| 截圖測試站 782fd73d | 插件已配對、host 在線；最新追加測試見 rc.10 段落：啟動／停止已修復，本機模型完整對話仍逾時，Gateway 專用憑證待提供 |
 | 停止／重連後的上下文 | 重啟插件 host 後，從網頁恢復同一對話，正確回憶停止前的測試識別字；對話轉送進度保留 |
 | 停用／重新啟用 | 原生 Plugins 停用後 API 拒絕操作（404）；重新啟用後空白配對欄位、直接執行未勾選，重新配對及實際回覆成功 |
 | 取消連結 | 正式 UI 取消後 host 離線、登入核准失效；空白欄位重新配對後收到實際回覆並恢復 ready |

@@ -42,6 +42,8 @@ Omnigent 固定下載 0.16.0。優先沿用 PATH 或 Hermes bundle 中的 uv；�
 
 Hermes 自身使用既有 provider、模型與 profile。本機 llama.cpp 模型會共用原 profile 已啟動、經 Hermes 擁有權驗證的 loopback 推論服務；未啟動時須先在 Hermes 的 Local models 設定啟動。Omnigent 官方 per-session home 會私有複用原有 `.env`／`auth.json`，不修改來源；配對密碼不放入這些資料。缺少訂閱／供應商登入的引擎會明確驗證失敗。
 
+本機服務可連線仍須通過完整 Hermes 對話驗證。本次第二站的 Qwen 0.8B 可回覆最小 API 請求，但完整對話在關閉思考模式及只載入 terminal 工具的比較中仍逾時，因此該站維持 `needs-verification`。主站 Sol／Luna 的實際對話已通過；完整測試條件與限制見驗收紀錄。
+
 Omnigent0.16 的 Hermes 原生支援尚缺模型目錄／切換與 `HERMES_HOME` 路徑處理，本插件只在自己安裝的 Omnigent venv 補上這些分支。相容層要求精確0.16.0與原碼錨點，拒絕修改系統或其他插件的 Omnigent；原始碼私有備份與SHA256收據保存在插件狀態目錄。模型由 Hermes 官方 inventory 載入，只列出當前 provider 的識別碼。對直接設定於 `model` 的 custom endpoint，使用原生 runtime provider 憑證解析與 `/models` 探索，避免原生空金鑰探測只顯示預設模型。清單保留供應商提供的替代模型；模型滿載時可手動選擇另一個模型再驗證。模型出現在清單不代表當下容量或所有工具功能已通過。
 
 ### 容器隔離能力
