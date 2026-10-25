@@ -9,7 +9,7 @@
 - 第二站的 Hermes 原生目錄回傳 host 在線、Hermes engine ready，以及 13 個實際模型選項；Claude Code、Codex、Pi 在該容器均未安裝，插件正確回報缺少，不影響已安裝的 Hermes。
 - 第二站以插件即時驗證 `gpt-6-luna` 時，新 session 建立成功，但立即送出的探針在 Hermes TUI 尚未就緒時未寫入 transcript，回報 `RUNTIMEERROR`；測試 session 已停止，plugin 狀態保持 `needs-verification`。
 - 固定等待 10 秒的早期修正仍曾間歇失敗，證明延遲本身不能可靠解決 Hermes 首次事件遺失。候選版現在只在 `RUNTIMEERROR` 且 Omnigent items 沒有接受 user message 時，成功清理舊 session 後才用全新 session 重試一次；訊息已接受或清理失敗就不重送。重試與這兩個安全條件有回歸測試覆蓋。
-- 以目前工作樹的候選 adapter.py 在實際 Hermes 0.22.5 容器內執行一次性 Omnigent session，模型 `gpt-5.6-sol` 精確回覆 `OMNIGENT_CONNECTION_OK`，session 清理結果為 `stopped`。這是 adapter 實際對話驗證，不代表公開 repo 已安裝版本或瀏覽器 UI 已完成驗收。
+- 已由 Hermes Plugin Manager 從公開 repo 更新安裝 rc.12，插件保持 enabled；Plugin Doctor 的 runtime discovery、manifest、import、registration 全通過，遠端版本檢查與安裝 commit 一致。以服務 UID 執行安裝後插件的 status／catalog 均成功，Hermes host 與 14 個模型項目可列出；`gpt-5.6-sol` 真實對話回覆 `OMNIGENT_CONNECTION_OK`、session `stopped`，插件狀態轉為 `ready`。本環境沒有可用的瀏覽器 renderer，故未重做可視頁面點擊驗收。
 - 測試容器 `hermes config get approvals.mode` 回報 `smart`，即低風險命令自動通過、危險或不確定命令仍要求確認；未將 profile 改成 `off`／YOLO。
 - 第二站目前讀取到的有效 Hermes 設定為 `openai-codex`／`gpt-6.1-sol`，沒有自訂 provider。這次沒有改寫該 profile 或其登入資料；安裝修正後仍須在第二站重跑插件驗證。
 - 指定 LiteLLM Gateway 的 live `/model/info` 顯示 19 個 Sol／Luna 模型 ID，專用 alias 查無既有金鑰。Hermes pod 對外域名回傳 403；對內部 Service 的 TCP 4000 連線遭拒。兩側 NetworkPolicy 目前分別未允許第二站 Hermes 到 Gateway 的流量。
