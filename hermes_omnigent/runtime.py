@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -87,7 +88,13 @@ class Runtime:
     def active(self):
         if self._active:
             return self._active()
-        import yaml
+        # Hermes 0.22 bundles its safe YAML reader instead of PyYAML.
+        try:
+            import hermes_yaml as yaml
+        except ModuleNotFoundError as error:
+            if error.name != 'hermes_yaml':
+                raise
+            import yaml
         try:
             config = yaml.safe_load((self.home / 'config.yaml').read_text()) or {}
             plugins = config.get('plugins', {})
@@ -138,13 +145,18 @@ class Runtime:
         env = dict(os.environ)
         env.update(HERMES_HOME=str(self.home), OMNIGENT_CONFIG_HOME=str(self.omni),
                    OMNIGENT_DATA_DIR=str(self.omni), OMNIGENT_HOST_NO_OPEN='1')
+        env['HERMES_OMNIGENT_PYTHONPATH'] = env.get('HERMES_OMNIGENT_PYTHONPATH') or env.get('PYTHONPATH', '')
+        # Hermes bundle dependencies must never override the private SDK's MCP,
+        # FastAPI or other packages. Restore this path only in native inventory.
+        env.pop('PYTHONPATH', None)
+        env.pop('PYTHONHOME', None)
         env['HERMES_OMNIGENT_PROFILE'] = str(self.home)
         env['HERMES_OMNIGENT_PYTHON'] = env.get('HERMES_OMNIGENT_PYTHON') or sys.executable
         env['HERMES_OMNIGENT_DIRECT_HERMES'] = '1' if self.state().get('allowDirectHermes') is True else '0'
         # The SDK filters host->runner environments, including zygote forks.
         # Forward these selectors explicitly; never opt in all HERMES_* vars.
         passthrough = {name.strip() for name in env.get('OMNIGENT_RUNNER_ENV_PASSTHROUGH', '').split(',') if name.strip()}
-        passthrough.update(('HERMES_OMNIGENT_PROFILE', 'HERMES_OMNIGENT_PYTHON', 'HERMES_OMNIGENT_DIRECT_HERMES'))
+        passthrough.update(('HERMES_OMNIGENT_PYTHONPATH', 'HERMES_OMNIGENT_PROFILE', 'HERMES_OMNIGENT_PYTHON', 'HERMES_OMNIGENT_DIRECT_HERMES'))
         env['OMNIGENT_RUNNER_ENV_PASSTHROUGH'] = ','.join(sorted(passthrough))
         env['PATH'] = os.pathsep.join([str(self.root / 'bin'), str(self.root / 'bootstrap/bin'), env.get('PATH', '')])
         # An Omnigent-managed child must not donate its isolated agent home or
@@ -158,6 +170,23 @@ class Runtime:
         env.pop('HARNESS_HERMES_NATIVE_BRIDGE_DIR', None)
         return env
 
+    @staticmethod
+    def bundled_uv():
+        # Hermes bundle tools are not necessarily exposed in its service PATH.
+        # Locate only the installed Hermes package, never the current workspace.
+        try:
+            spec = importlib.util.find_spec('hermes_cli')
+            if not spec or not spec.origin:
+                return None
+            root = Path(spec.origin).resolve().parent.parent
+            candidates = sorted((root / 'tools').glob('uv-*/uv'))
+            for binary in reversed(candidates):
+                if binary.is_file() and os.access(binary, os.X_OK):
+                    return str(binary)
+        except (ImportError, ValueError, OSError):
+            pass
+        return None
+
     def discover(self):
         if self._find:
             return self._find()
@@ -165,6 +194,8 @@ class Runtime:
         result = {}
         for name in (*ENGINES, 'omnigent', 'uv', 'tmux', 'bwrap'):
             binary = shutil.which(name, path=env['PATH'])
+            if not binary and name == 'uv':
+                binary = self.bundled_uv()
             if not binary:
                 result[name] = {'available': False, 'path': None}
                 continue
@@ -225,13 +256,25 @@ class Runtime:
             return self.state()
 
     def installation_identity(self):
-        # A cross-filesystem move copies into the just-deleted target and can
-        # reuse its inode. A local, untracked marker survives restarts/updates,
-        # but is deleted by force reinstall and must receive a fresh UUID.
-        marker = Path(__file__).resolve().parents[1] / '.omnigent-installation.json'
+        # Hermes 0.22 carries untracked state across force reinstall. A fresh
+        # git clone replaces .git/config, while a normal update copies it with
+        # its original mtime before pulling. Directory inodes are not reliable
+        # because publication can move/copy trees and reuse old inodes.
+        checkout = Path(__file__).resolve().parents[1]
+        marker = checkout / '.omnigent-installation.json'
+        git_config = checkout / '.git/config'
+        clone = str(git_config.stat().st_mtime_ns) if git_config.is_file() else None
         try:
-            identity = read(marker).get('id')
+            saved = read(marker)
+            identity = saved.get('id')
             if isinstance(identity, str) and re.fullmatch(r'[a-f0-9]{32}', identity):
+                if clone is not None and saved.get('clone') != clone:
+                    self.require_profile_user()
+                    # Adopt the fingerprint on upgrade from rc.8 without
+                    # treating that ordinary plugin update as a new install.
+                    if saved.get('clone') is not None:
+                        identity = uuid.uuid4().hex
+                    write(marker, {'id': identity, 'clone': clone})
                 return identity
             if marker.exists():
                 return None
@@ -246,7 +289,7 @@ class Runtime:
         except OSError:
             raise Failure('INSTALLATION_ID_UNAVAILABLE') from None
         with os.fdopen(descriptor, 'w') as file:
-            json.dump({'id': identity}, file)
+            json.dump({'id': identity, 'clone': clone}, file)
             file.flush()
             os.fsync(file.fileno())
         return identity
@@ -255,17 +298,37 @@ class Runtime:
         active = self.active()
         state = self.state()
         installation = self.installation_identity()
-        changed = installation is not None and state.get('installationId') != installation
+        activation = read(self.root / 'activation.json').get('id')
+        changed = ((installation is not None and state.get('installationId') != installation)
+                   or state.get('activationId') != activation)
         if state.get('nativeActive') != active or changed:
             with self.lock():
                 previous = self.state()
-                changed = installation is not None and previous.get('installationId') != installation
+                changed = ((installation is not None and previous.get('installationId') != installation)
+                           or previous.get('activationId') != activation)
                 if not active or previous.get('nativeActive') is False or changed:
                     write(self.root / 'verification.json', {})
                     self.save(phase='needs-login', loginConfirmed=False, issue=None)
                     self.save(allowDirectHermes=False)
-                self.save(nativeActive=active, **({'installationId': installation} if installation is not None else {}))
+                self.save(nativeActive=active, activationId=activation,
+                          **({'installationId': installation} if installation is not None else {}))
         return active
+
+    def on_unload(self):
+        # Native unload is synchronous with disable, unlike the polling fallback.
+        # Persist revocation even when an operation holds the state lock, so a
+        # rapid disable/enable cannot reuse the previous approval.
+        if not self.active():
+            self.require_profile_user()
+            write(self.root / 'activation.json', {'id': uuid.uuid4().hex})
+            try:
+                self.lifecycle()
+            except Failure:
+                pass
+
+    def approved(self, state):
+        return (state.get('loginConfirmed') is True
+                and state.get('activationId') == read(self.root / 'activation.json').get('id'))
 
     def receipt_ok(self, receipt, state, host_id, dependency):
         return (receipt.get('ok') is True and receipt.get('reply') == SENTINEL
@@ -284,13 +347,16 @@ class Runtime:
         receipts = read(self.root / 'verification.json')
         data = response.get('data') or {}
         host = data.get('host') or {'connected': False}
-        ready = (active and state.get('loginConfirmed') is True and response.get('ok') is True
+        approved = self.approved(state)
+        ready = (active and approved and response.get('ok') is True
                  and host.get('connected') is True and bool(installed)
                  and all(data.get('engines', {}).get(name, {}).get('ready') is True
                          and self.receipt_ok(receipts.get(name, {}), state, host.get('id'), deps[name]) for name in installed))
         phase = state.get('phase', 'needs-login')
         if not active:
             phase = 'disabled'
+        elif not approved and phase not in ('installing', 'connecting', 'verifying', 'disconnecting', 'error'):
+            phase = 'needs-login'
         elif phase not in ('installing', 'connecting', 'verifying', 'disconnecting', 'error', 'needs-login'):
             phase = 'ready' if ready else 'needs-verification'
         operation = read(self.root / 'operation.json', {'running': False})
@@ -298,12 +364,13 @@ class Runtime:
             operation = {**operation, 'running': False, 'error': 'OPERATION_INTERRUPTED'}
             if phase in ('installing', 'connecting', 'verifying', 'disconnecting'):
                 phase = 'error'
-        return {'phase': phase, 'enabled': active, 'loginConfirmed': state.get('loginConfirmed') is True,
-                'pairingRequired': active and state.get('loginConfirmed') is not True,
+        return {'phase': phase, 'enabled': active, 'loginConfirmed': approved,
+                'pairingRequired': active and not approved,
                 'server': state.get('server'), 'host': host, 'installedEngines': installed,
                 'engines': {name: {**deps.get(name, {}), **data.get('engines', {}).get(name, {})} for name in ENGINES},
                 'verification': receipts, 'operation': operation, 'issue': state.get('issue'),
-                'sandbox': read(self.root / 'sandbox.json'), 'allowDirectHermes': state.get('allowDirectHermes') is True}
+                'sandbox': read(self.root / 'sandbox.json'),
+                'allowDirectHermes': approved and state.get('allowDirectHermes') is True}
 
     @staticmethod
     def _thread_running(operation):
@@ -392,6 +459,7 @@ class Runtime:
 
     def initialize(self, server, username, password, allowDirectHermes=False):
         self.require_active()
+        activation = read(self.root / 'activation.json').get('id')
         previous_server = self.state().get('server')
         # Invalidate approval even when malformed URL/new credentials fail.
         write(self.root / 'verification.json', {})
@@ -415,13 +483,15 @@ class Runtime:
         self.save_host_generation()
         password = None
         self.require_active()
-        self.save(loginConfirmed=True, phase='needs-verification')
+        if activation != read(self.root / 'activation.json').get('id'):
+            raise Failure('FRESH_LOGIN_REQUIRED')
+        self.save(loginConfirmed=True, activationId=activation, phase='needs-verification')
         return self.verify()
 
     def verify(self, engine=None, model=None):
         self.require_active()
         state = self.state()
-        if not state.get('loginConfirmed'):
+        if not self.approved(state):
             raise Failure('FRESH_LOGIN_REQUIRED')
         deps = self.discover()
         installed = [name for name in ENGINES if deps.get(name, {}).get('available')]
@@ -433,6 +503,8 @@ class Runtime:
         receipts = read(self.root / 'verification.json')
         for name in [engine] if engine else installed:
             self.require_active()
+            if not self.approved(state):
+                raise Failure('FRESH_LOGIN_REQUIRED')
             response = self.call('verify', server=state['server'], engine=name, timeoutSeconds=120,
                                  **({'model': model} if model else {}))
             data = response.get('data') or {}
@@ -444,6 +516,8 @@ class Runtime:
                                   else data.get('reason') or response.get('error', {}).get('code') or 'NO_REPLY'})}
             write(self.root / 'verification.json', receipts)
         self.require_active()
+        if not self.approved(state):
+            raise Failure('FRESH_LOGIN_REQUIRED')
         ok = bool(host_id) and all(self.receipt_ok(receipts.get(name, {}), state, host_id, deps[name]) for name in installed)
         self.save(phase='ready' if ok else 'needs-verification', issue=None if ok else 'INCOMPLETE_CHAT_VERIFICATION')
         return {'ok': ok, 'verification': receipts}
@@ -451,7 +525,7 @@ class Runtime:
     def catalog(self):
         self.require_active()
         state = self.state()
-        if not state.get('loginConfirmed'):
+        if not self.approved(state):
             raise Failure('FRESH_LOGIN_REQUIRED')
         return self.call('catalog', server=state['server'])
 
@@ -468,7 +542,7 @@ class Runtime:
     def restore(self):
         self.require_active()
         state = self.state()
-        if not state.get('loginConfirmed') or not state.get('server'):
+        if not self.approved(state) or not state.get('server'):
             raise Failure('FRESH_LOGIN_REQUIRED')
         self.install()
         self.require_active()
@@ -487,7 +561,7 @@ class Runtime:
     def host_generation(self):
         from .patches import MARKER
         return {'generation': MARKER, 'allowDirectHermes': self.state().get('allowDirectHermes') is True,
-                'runnerEnvironmentVersion': 1}
+                'runnerEnvironmentVersion': 2}
 
     def ensure_host_generation(self, server):
         previous = read(self.root / 'host-runtime.json')

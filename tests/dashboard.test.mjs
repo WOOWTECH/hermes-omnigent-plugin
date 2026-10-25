@@ -21,7 +21,7 @@ test('declares an Omnigent settings page that Hermes can open from Plugins', () 
   assert.equal(manifest.label, 'Omnigent 設定');
   assert.equal(manifest.tab.path, '/omnigent');
   assert.equal(manifest.tab.position, 'after:plugins');
-  assert.equal(manifest.version, '0.1.0-rc.8');
+  assert.equal(manifest.version, '0.1.0-rc.9');
   assert.match(source, /h\('h1', null, 'Omnigent 設定'\)/);
 });
 
@@ -54,4 +54,28 @@ test('chat link binds to the selected verified model, host, engine version and s
     const modified = {...state, verification: {hermes: {...state.verification.hermes, ...replacement}}};
     assert.equal(window.testChatURL(modified, 'hermes', 'selected-model'), null);
   }
+});
+
+
+test('slow status requests do not overlap and polling recovers after failure', async () => {
+  let calls = 0, resolve, reject;
+  const window = {__HERMES_PLUGIN_SDK__: {React: {}, hooks: {}, fetchJSON() {
+    calls++;
+    return new Promise((yes, no) => { resolve = yes; reject = no; });
+  }}, __HERMES_PLUGINS__: {register() {}, registerSlot() {}}};
+  vm.runInNewContext(source.replace('  function PairForm(', '  window.refreshForTest = refresh;\n  function PairForm('),
+    {window, URL, setInterval, clearInterval});
+  const first = window.refreshForTest();
+  const second = window.refreshForTest();
+  assert.equal(calls, 1);
+  resolve({pairingRequired: true});
+  await Promise.all([first, second]);
+  const failed = window.refreshForTest();
+  assert.equal(calls, 2);
+  reject(new Error('temporary network failure'));
+  await failed;
+  const recovered = window.refreshForTest();
+  assert.equal(calls, 3);
+  resolve({pairingRequired: false});
+  await recovered;
 });

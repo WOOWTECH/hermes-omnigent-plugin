@@ -170,6 +170,8 @@ class Client:
             # to an unexpected origin. A proxy/TLS error is reported generically.
             response = self._http.request(method, f"{self.server}{path}", json=payload, headers=headers,
                                      timeout=timeout_seconds, follow_redirects=False)
+        except httpx.TimeoutException:
+            raise PluginError("server_timeout", "Omnigent 等待回應逾時，請查看原生引擎啟動狀態。") from None
         except httpx.HTTPError:
             raise PluginError("server_unreachable", "無法連線 Omnigent server，請檢查網址、網路與 TLS。") from None
         if response.status_code == 401:
@@ -792,7 +794,8 @@ class Plugin:
             # initial_items passed on creation, so deliver one explicit event.
             client.request("POST", f"/v1/sessions/{quote(session_id, safe='')}/events", {
                 "type": "message", "data": {"role": "user", "content": [
-                    {"type": "input_text", "text": PROBE_PROMPT}]}})
+                    {"type": "input_text", "text": PROBE_PROMPT}]}},
+                timeout_seconds=max(1.0, min(90.0, deadline - self.clock())))
             recover_after = self.clock() + 8.0
             while True:
                 page = client.request("GET", f"/v1/sessions/{quote(session_id, safe='')}/items?limit=100&order=desc")

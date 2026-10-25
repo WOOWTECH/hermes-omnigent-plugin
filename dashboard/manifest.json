@@ -2,7 +2,7 @@
   "name": "hermes-omnigent",
   "label": "Omnigent 設定",
   "description": "管理 Omnigent 配對、連線狀態、現有引擎、模型與對話驗證。",
-  "version": "0.1.0-rc.8",
+  "version": "0.1.0-rc.9",
   "icon": "Settings",
   "tab": {
     "path": "/omnigent",

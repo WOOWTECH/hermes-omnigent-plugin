@@ -15,6 +15,8 @@ def register(ctx):
         return
     runtime = get_runtime()
     runtime.activate()
+    if callable(getattr(ctx, 'on_unload', None)):
+        ctx.on_unload(runtime.on_unload)
     def run(action, parameters):
         try:
             if action == 'status':

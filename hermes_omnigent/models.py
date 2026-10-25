@@ -16,11 +16,12 @@ inventory = build_models_payload(context, explicit_only=True, include_unconfigur
 # when model.api_key is configured. Resolve the same credentials as chat and
 # probe only the active endpoint; keep the configured model when unavailable.
 custom_models = None
-if bare_custom:
+fallback_endpoint = bool(context.current_base_url) and not any(p.get('is_current') for p in inventory.get('providers', []))
+if bare_custom or fallback_endpoint:
     try:
         from hermes_cli.runtime_provider import resolve_runtime_provider
         from hermes_cli.models import fetch_api_models
-        runtime = resolve_runtime_provider(requested='custom')
+        runtime = resolve_runtime_provider(requested=context.current_provider)
         custom_models = fetch_api_models(runtime.get('api_key'), runtime.get('base_url'),
                                         timeout=5.0, api_mode=runtime.get('api_mode'))
     except Exception:
@@ -33,6 +34,14 @@ for provider in inventory.get('providers', []):
         continue
     available = custom_models if custom_models and provider.get('slug') == 'custom' else provider.get('models', [])
     for model in available:
+        identifier = model if isinstance(model, str) else model.get('id') if isinstance(model, dict) else None
+        if identifier and identifier not in {row['id'] for row in rows}:
+            rows.append({'id': identifier, 'displayName': identifier, 'model': identifier,
+                         'isDefault': identifier == inventory.get('model')})
+# Auto + an explicit endpoint can have no picker provider row. The configured
+# model remains selectable but still needs a successful real chat verification.
+if fallback_endpoint and not rows:
+    for model in custom_models or [inventory.get('model')]:
         identifier = model if isinstance(model, str) else model.get('id') if isinstance(model, dict) else None
         if identifier and identifier not in {row['id'] for row in rows}:
             rows.append({'id': identifier, 'displayName': identifier, 'model': identifier,

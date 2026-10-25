@@ -9,14 +9,16 @@ from unittest.mock import Mock, patch
 
 
 class ModelInventoryTests(unittest.TestCase):
-    def inventory(self, *, unavailable=False):
-        context = types.SimpleNamespace(current_provider='custom', current_base_url='https://provider.example/v1')
+    def inventory(self, *, unavailable=False, automatic=False):
+        context = types.SimpleNamespace(current_provider='auto' if automatic else 'custom', current_base_url='https://provider.example/v1')
         build = Mock(return_value={'model': 'real/default', 'providers': [
             {'slug': 'custom', 'is_current': True, 'models': ['real/default']},
             {'slug': 'other', 'is_current': False, 'models': ['unrelated/model']},
         ]})
         resolve = Mock(return_value={'api_key': 'provider-key-stay-private',
                                      'base_url': context.current_base_url, 'api_mode': 'chat_completions'})
+        if automatic:
+            build.return_value['providers'] = []
         def endpoint(key, base, **kwargs):
             if unavailable:
                 raise RuntimeError('sensitive upstream diagnostic')
@@ -43,6 +45,15 @@ class ModelInventoryTests(unittest.TestCase):
         self.assertFalse(rows[1]['isDefault'])
         resolve.assert_called_once_with(requested='custom')
         self.assertTrue(build.call_args.kwargs['for_picker'])
+
+    def test_auto_provider_with_configured_endpoint_uses_native_runtime_models(self):
+        rows, _, resolve, _ = self.inventory(automatic=True)
+        self.assertEqual([row['id'] for row in rows], ['real/default', 'real/fallback'])
+        resolve.assert_called_once_with(requested='auto')
+
+    def test_unavailable_auto_catalog_keeps_the_explicitly_configured_model(self):
+        rows, _, _, _ = self.inventory(automatic=True, unavailable=True)
+        self.assertEqual([row['id'] for row in rows], ['real/default'])
 
     def test_unavailable_catalog_keeps_configured_model_without_leaking_diagnostics(self):
         rows, _, _, _ = self.inventory(unavailable=True)

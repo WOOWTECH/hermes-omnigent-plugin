@@ -36,7 +36,13 @@
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
     });
   }
-  async function refresh() {
+  let refreshPending = null;
+  function refresh() {
+    if (refreshPending) return refreshPending;
+    refreshPending = readStatus().finally(() => { refreshPending = null; });
+    return refreshPending;
+  }
+  async function readStatus() {
     try {
       const previous = current;
       current = await request('/status');

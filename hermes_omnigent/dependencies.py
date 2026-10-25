@@ -57,18 +57,21 @@ def private_tmux(root, tool='tmux'):
             filename, checksum = metadata.get('Filename', ''), metadata.get('SHA256', '')
             if not filename.startswith('pool/') or '..' in filename.split('/') or len(checksum) != 64:
                 raise Failure('DEPENDENCY_METADATA_INVALID')
-            url = 'https://deb.debian.org/debian/' + filename
-            try:
-                with urllib.request.urlopen(url, timeout=60) as response:
-                    data = response.read(20_000_001)
-            except urllib.error.HTTPError as error:
-                if error.code == 404 and not refreshed:
-                    # Old container images can retain indexes whose package
-                    # files have left the mirror. Refresh signatures/indexes
-                    # into the plugin directory, never /var/lib/apt or dpkg.
+            for archive in ('https://deb.debian.org/debian/', 'https://deb.debian.org/debian-security/'):
+                url = archive + filename
+                try:
+                    with urllib.request.urlopen(url, timeout=60) as response:
+                        data = response.read(20_000_001)
+                    break
+                except urllib.error.HTTPError as error:
+                    if error.code == 404:
+                        continue
+                    raise Failure('NATIVE_PACKAGE_DOWNLOAD_FAILED') from None
+            else:
+                if not refreshed:
                     refresh_private_index()
                     return download(names)
-                raise Failure('NATIVE_PACKAGE_DOWNLOAD_FAILED') from None
+                raise Failure('NATIVE_PACKAGE_DOWNLOAD_FAILED')
             if len(data) > 20_000_000 or hashlib.sha256(data).hexdigest() != checksum:
                 raise Failure('DEPENDENCY_HASH_MISMATCH')
             fd, temporary = tempfile.mkstemp(suffix='.deb', dir=native)
@@ -83,6 +86,9 @@ def private_tmux(root, tool='tmux'):
                 os.unlink(temporary)
             receipts.append({'name': name, 'version': metadata.get('Version'), 'sha256': checksum, 'url': url})
             return
+        if not refreshed:
+            refresh_private_index()
+            return download(names)
         raise Failure('TMUX_PACKAGE_MISSING')
     if tool not in ('tmux', 'bwrap'):
         raise Failure('DEPENDENCY_UNSUPPORTED')

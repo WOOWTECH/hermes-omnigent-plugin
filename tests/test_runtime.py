@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -39,6 +41,42 @@ class RuntimeTests(unittest.TestCase):
 
     def pair(self):
         return self.runtime.initialize('https://server.example', 'account', 'do-not-persist-this-password')
+
+    def test_bundled_uv_is_discovered_when_host_has_no_pip_or_uv_on_path(self):
+        package = self.home / 'bundle/hermes_cli'
+        package.mkdir(parents=True)
+        uv = self.home / 'bundle/tools/uv-0.13.5-linux-x64/uv'
+        uv.parent.mkdir(parents=True)
+        uv.write_text('#!/bin/sh\necho "uv 0.13.5"\n')
+        uv.chmod(0o755)
+        runtime = Runtime(self.home, active=lambda: True)
+        with patch.dict('os.environ', {'PATH': ''}), patch('importlib.util.find_spec',
+                return_value=SimpleNamespace(origin=str(package / '__init__.py'))):
+            result = runtime.discover()['uv']
+        self.assertTrue(result['available'])
+        self.assertEqual(result['path'], str(uv))
+        self.assertEqual(result['version'], '0.13.5')
+
+    def test_native_yaml_reader_preserves_enabled_and_disabled_policy_without_pyyaml(self):
+        import yaml
+        runtime = Runtime(self.home)
+        config = self.home / 'config.yaml'
+        with patch.dict('sys.modules', {'hermes_yaml': yaml, 'yaml': None}):
+            config.write_text('plugins:\n  enabled: [hermes-omnigent]\n')
+            self.assertTrue(runtime.active())
+            config.write_text('plugins:\n  enabled: [hermes-omnigent]\n  disabled: [hermes-omnigent]\n')
+            self.assertFalse(runtime.active())
+
+    def test_private_sdk_does_not_import_hermes_incompatible_mcp_package(self):
+        foreign = self.home / 'hermes-bundle'
+        foreign.mkdir()
+        (foreign / 'mcp.py').write_text('raise ImportError("foreign Hermes MCP dependency")\n')
+        with patch.dict(os.environ, {'PYTHONPATH': str(foreign)}):
+            env = self.runtime.environment()
+        result = subprocess.run([sys.executable, '-c', 'import omnigent.tools.mcp'],
+                                env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr[-400:])
+        self.assertEqual(env.get('HERMES_OMNIGENT_PYTHONPATH'), str(foreign))
 
     def test_first_activation_cannot_reuse_ambient_authentication(self):
         self.assertTrue(self.runtime.status()['pairingRequired'])
@@ -300,6 +338,56 @@ class RuntimeTests(unittest.TestCase):
         self.runtime._thread.join(2)
         self.assertFalse(self.runtime.state()['loginConfirmed'])
         self.assertTrue(self.runtime.status()['pairingRequired'])
+
+    def test_rapid_disable_enable_revokes_consent_even_while_operation_holds_lock(self):
+        self.pair()
+        with self.runtime.lock():
+            self.enabled = False
+            self.runtime.on_unload()
+            self.enabled = True
+            self.assertFalse(self.runtime.status()['loginConfirmed'])
+            self.assertTrue(self.runtime.status()['pairingRequired'])
+            with self.assertRaisesRegex(Failure, 'FRESH_LOGIN_REQUIRED'):
+                self.runtime.verify()
+        self.runtime.lifecycle()
+        self.assertFalse(self.runtime.state()['allowDirectHermes'])
+        self.assertEqual(read(self.runtime.root / 'verification.json'), {})
+        self.assertTrue(self.pair()['ok'])
+
+    def test_normal_hot_reload_keeps_pairing_approval(self):
+        self.pair()
+        self.runtime.on_unload()
+        self.assertTrue(self.runtime.status()['loginConfirmed'])
+        self.assertFalse((self.runtime.root / 'activation.json').exists())
+
+    def test_new_hermes_reinstall_cannot_reuse_carried_untracked_marker(self):
+        checkout = self.home / 'checkout'
+        (checkout / '.git').mkdir(parents=True)
+        config = checkout / '.git/config'
+        config.write_text('[core]\n')
+        with patch('hermes_omnigent.runtime.__file__', str(checkout / 'hermes_omnigent/runtime.py')):
+            first = self.runtime.installation_identity()
+            # Normal updates preserve config metadata, even in a new tree.
+            import shutil
+            staged = self.home / 'staged'
+            shutil.copytree(checkout, staged)
+            with patch('hermes_omnigent.runtime.__file__', str(staged / 'hermes_omnigent/runtime.py')):
+                self.assertEqual(self.runtime.installation_identity(), first)
+            # New clone has fresh metadata; carried marker must not grant it
+            # the previous installation's login/direct-execution consent.
+            stamp = config.stat().st_mtime_ns + 1000000000
+            os.utime(config, ns=(stamp, stamp))
+            self.assertNotEqual(self.runtime.installation_identity(), first)
+
+    def test_rc8_marker_migrates_without_reset_on_normal_update(self):
+        checkout = self.home / 'checkout'
+        (checkout / '.git').mkdir(parents=True)
+        (checkout / '.git/config').write_text('[core]\n')
+        marker = checkout / '.omnigent-installation.json'
+        write(marker, {'id': 'a' * 32})
+        with patch('hermes_omnigent.runtime.__file__', str(checkout / 'hermes_omnigent/runtime.py')):
+            self.assertEqual(self.runtime.installation_identity(), 'a' * 32)
+            self.assertIn('clone', read(marker))
 
 
 if __name__ == '__main__':

@@ -1,5 +1,5 @@
 name: hermes-omnigent
-version: "0.1.0-rc.8"
+version: "0.1.0-rc.9"
 description: "Manage Omnigent pairing, existing engines, models, and verified chats from the Hermes Dashboard."
 author: WOOWTECH
 kind: standalone
