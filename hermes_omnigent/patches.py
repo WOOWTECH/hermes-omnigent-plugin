@@ -1,7 +1,7 @@
 """Exact source transformations of Omnigent0.16 in the plugin-owned venv."""
 from pathlib import Path
 
-MARKER = '# hermes-omnigent-plugin compatibility v14'
+MARKER = '# hermes-omnigent-plugin compatibility v17'
 
 
 def make_edits(sdk, source_overrides=None):
@@ -57,6 +57,11 @@ def make_edits(sdk, source_overrides=None):
         if source.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
         source = source.replace(anchor, '        "_config_version",\n' + anchor)
+        anchor = '    user_cfg = _load_user_hermes_config()\n'
+        if source.count(anchor) != 1:
+            raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
+        source = source.replace(anchor, '    from hermes_omnigent.compat import shared_local_model_config\n'
+            '    user_cfg = shared_local_model_config(_load_user_hermes_config())\n')
         anchor = '            "command": sys.executable,\n'
         if source.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
@@ -160,9 +165,23 @@ def make_edits(sdk, source_overrides=None):
             return JSONResponse({"models": await asyncio.to_thread(hermes_models)})
 ''' + '        if harness == "claude-native":\n            return await get_session_claude_model_options(session_id)\n')
 
+    def readiness(source):
+        anchor = '    if harness_cli_installed(install_key, timeout=READINESS_CLI_PROBE_TIMEOUT_S):\n'
+        if source.count(anchor) != 1:
+            raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
+        source = source.replace(anchor, '    probe_timeout = max(30.0, READINESS_CLI_PROBE_TIMEOUT_S) if install_key == HERMES_KEY else READINESS_CLI_PROBE_TIMEOUT_S\n'
+                                '    if harness_cli_installed(install_key, timeout=probe_timeout):\n')
+        anchor = '            cache_key: tuple[str, ...] = ("codex",)\n        else:\n'
+        if source.count(anchor) != 1:
+            raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
+        return source.replace(anchor, '            cache_key: tuple[str, ...] = ("codex",)\n'
+            '        elif canonical in _HERMES_NATIVE_HARNESSES or canonical == HERMES_KEY:\n'
+            '            cache_key = ("hermes",)\n        else:\n')
+
     change('host/connect.py', host)
     change('harnesses/hermes_native/bridge.py', bridge)
     change('harnesses/hermes_native/forwarder.py', forwarder)
     change('runner/native/orchestration.py', orchestration)
     change('runner/app.py', runner)
+    change('onboarding/harness_readiness.py', readiness)
     return edits

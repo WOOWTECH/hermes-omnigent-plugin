@@ -1,2 +1,2 @@
 """Hermes Omnigent pairing integration."""
-__version__ = "0.1.0-rc.9"
+__version__ = "0.1.0-rc.10"

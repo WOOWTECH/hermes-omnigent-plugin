@@ -123,6 +123,20 @@
   const phases = {'needs-login': '等待你完成配對', installing: '準備所需套件', connecting: '連結主機',
     verifying: '驗證實際對話', ready: '已連結並通過對話驗證', 'needs-verification': '需要重新驗證',
     error: '操作需要處理', disabled: '插件已停用', disconnecting: '正在取消連結'};
+  function verificationDetails(receipt) {
+    if (!receipt || receipt.ok) return '';
+    const reasons = {
+      ENGINE_NOT_READY: '原生引擎尚未就緒，請先完成模型供應商設定與登入。',
+      MODELS_UNAVAILABLE: '目前無法取得模型，請檢查原生引擎的供應商設定。',
+      NATIVE_TERMINAL_START_FAILED: '原生終端啟動失敗，請檢查容器執行環境與插件診斷紀錄。',
+      REPLY_TIMEOUT: '等待模型回覆逾時，請確認模型服務可用後重試。',
+      SERVER_UNREACHABLE: '無法連上 Omnigent Server，請檢查網路與 Server 狀態。',
+      SESSION_STOP_FAILED: '測試對話未能確認停止，尚未通過驗證。'
+    };
+    const detail = reasons[receipt.reason] || '對話驗證未完成，請檢查原生引擎與模型服務後重試。';
+    return detail + (receipt.cleanup === 'stop_failed' && receipt.reason !== 'SESSION_STOP_FAILED'
+      ? ' 另外，測試對話未能確認停止。' : '');
+  }
   function Page() {
     const state = useRuntime();
     const [pair, setPair] = useState(false), [catalog, setCatalog] = useState(null);
@@ -171,7 +185,8 @@
           button('驗證所選模型', () => act('/verify', {engine, ...(model ? {model} : {})}), busy || !engine),
           chat ? h('a', {href: chat, target: '_blank', rel: 'noopener noreferrer', className: 'og-link'}, '開啟已驗證的對話') : null) : null,
         h('div', {className: 'og-engines'}, ...(state?.installedEngines || []).map(key => h('div', {className: 'og-engine', key},
-          h('strong', null, key), h('span', null, state.verification?.[key]?.ok ? '實際對話已驗證' : '尚未通過對話驗證'))))),
+          h('strong', null, key), h('span', null, state.verification?.[key]?.ok ? '實際對話已驗證' : '尚未通過對話驗證'),
+          verificationDetails(state.verification?.[key]) ? h('p', {role: 'alert'}, verificationDetails(state.verification[key])) : null)))),
       error ? h('p', {role: 'alert', className: 'og-error'}, error) : null,
       pair && state?.enabled ? h('div', {className: 'og-modal'}, h(PairForm, {close: () => setPair(false)})) : null);
   }

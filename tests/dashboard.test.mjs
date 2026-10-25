@@ -21,7 +21,7 @@ test('declares an Omnigent settings page that Hermes can open from Plugins', () 
   assert.equal(manifest.label, 'Omnigent 設定');
   assert.equal(manifest.tab.path, '/omnigent');
   assert.equal(manifest.tab.position, 'after:plugins');
-  assert.equal(manifest.version, '0.1.0-rc.9');
+  assert.equal(manifest.version, '0.1.0-rc.10');
   assert.match(source, /h\('h1', null, 'Omnigent 設定'\)/);
 });
 
@@ -78,4 +78,16 @@ test('slow status requests do not overlap and polling recovers after failure', a
   assert.equal(calls, 3);
   resolve({pairingRequired: false});
   await recovered;
+});
+
+test('verification shows the primary failure and cleanup failure without raw error text', () => {
+  const window = {__HERMES_PLUGIN_SDK__: {React: {}, hooks: {}, fetchJSON() {}},
+    __HERMES_PLUGINS__: {register() {}, registerSlot() {}}};
+  vm.runInNewContext(source.replace('  function Page()', '  window.detailsForTest = verificationDetails;\n  function Page()'),
+    {window, URL, setInterval, clearInterval});
+  const details = window.detailsForTest({ok: false, reason: 'NATIVE_TERMINAL_START_FAILED', cleanup: 'stop_failed'});
+  assert.match(details, /原生終端啟動失敗/);
+  assert.match(details, /另外.*未能確認停止/);
+  assert.doesNotMatch(window.detailsForTest({ok: false, reason: 'password=private'}), /password|private/);
+  assert.equal(window.detailsForTest({ok: true}), '');
 });

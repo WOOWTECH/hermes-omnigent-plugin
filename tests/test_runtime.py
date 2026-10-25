@@ -185,6 +185,36 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(self.pair()['ok'])
         self.assertNotEqual(self.runtime.status()['phase'], 'ready')
 
+    def test_primary_chat_failure_survives_cleanup_failure(self):
+        original = self.runtime._call
+        def fail(request):
+            result = original(request)
+            if request['action'] == 'verify':
+                result['data'].update(ok=False, reply=None, reason='ENGINE_NOT_READY',
+                                      cleanup='stop_failed', cleanupReason='SERVER_UNREACHABLE')
+            return result
+        self.runtime._call = fail
+        result = self.pair()
+        self.assertFalse(result['ok'])
+        receipt = result['verification']['hermes']
+        self.assertEqual(receipt['reason'], 'ENGINE_NOT_READY')
+        self.assertEqual(receipt['cleanupReason'], 'SERVER_UNREACHABLE')
+        self.assertNotEqual(self.runtime.status()['phase'], 'ready')
+
+    def test_verification_failure_codes_cannot_persist_raw_error_text(self):
+        original = self.runtime._call
+        def fail(request):
+            result = original(request)
+            if request['action'] == 'verify':
+                result['data'].update(ok=False, reply=None, reason='password=do-not-show',
+                                      cleanup='stop_failed', cleanupReason='token=do-not-show')
+            return result
+        self.runtime._call = fail
+        result = self.pair()
+        self.assertNotIn('do-not-show', json.dumps(result))
+        self.assertEqual(result['verification']['hermes']['reason'], 'NO_REPLY')
+        self.assertEqual(result['verification']['hermes']['cleanupReason'], 'SESSION_STOP_FAILED')
+
     def test_async_failure_sanitizes_raw_exception_and_returns_safe_error(self):
         def fail():
             raise RuntimeError('password=do-not-show-this')

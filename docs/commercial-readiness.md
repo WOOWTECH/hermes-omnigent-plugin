@@ -1,8 +1,17 @@
 # Hermes Omnigent 候選版驗收紀錄
 
-版本：v0.1.0-rc.9 候選版。驗收更新：2026-10-25 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
+版本：v0.1.0-rc.10 候選版。驗收更新：2026-10-25 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
 
 指定 Hermes0.19 Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
+
+## rc.10 追加驗收
+
+- 第二站原生模型設定已改為本機 Qwen 0.8B。平台查核確認該服務的 WOOW LLM Gateway ConfigMap 仍為空，所屬帳戶尚無平台 AI 模型服務；未複用其他站金鑰。
+- 真實失敗回條及僅屬於測試對話的 runner traceback 均確認：插件根目錄 `0770` 觸發 `HERMES_SESSION_DIRECTORY_INVALID`，導致啟動與停止一併失敗。修正只恢復服務 UID 擁有、非符號連結的插件目錄為 `0700`；來源歷史仍要求嚴格私有權限。已測試群組權限恢復、錯誤擁有者拒絕及符號連結拒絕。
+- 第二站 Hermes 包裝 CLI 冷啟動查版本量得 11.56 秒，超過原 8／10 秒期限。插件與私有 SDK 的 Hermes 探測改為 30 秒，同一輪共用 Hermes 別名探測結果；其他引擎期限與版本條件保持原值。
+- 原始對話失敗與停止失敗分別保存安全錯誤碼，設定頁顯示對應處理說明；不再讓停止失敗覆蓋真正的啟動錯誤。
+- 本機模型的原生設定需要原 profile 的受擁有權保護 runtime 狀態。新增 native helper 只解析原 profile 已擁有的 loopback 推論服務，將連線資料透過私有 pipe 交給對話設定；不複製程序身分、重啟原服務或為每個對話載入模型。雲端 provider 不經此 helper。
+- 現場正在重新驗收第二站模型回覆與工具；未完成項目不可視為已通過。
 
 ## 2026-10-25 重新驗收
 
@@ -31,7 +40,7 @@
 
 兩台皆只連結當下已安裝的 Hermes；沒有下載 Claude Code、Codex 或 Pi。兩台皆有 `/opt/data` PVC。原站曾缺少 checkout 與插件資料的原因仍未知，不能因此推斷 PVC 故障。
 
-目前 129 項 Python 回歸與 5 項 Node 介面測試通過；現場測試另外列示。
+目前 140 項 Python 回歸與 6 項 Node 介面測試通過；現場測試另外列示。
 
 ### 本次修正與證據
 
@@ -51,7 +60,7 @@
 
 對話內模型切換透過 Hermes 原生 Gateway 的 authenticated control ticket、revision／execution generation 檢查進行，再確認持久化模型設定；不自動核准供應商／帳號切換的額外確認。停止後冷啟動與暖機後的 Omnigent 更新 API 均已成功切換至 Luna，原生設定亦一致；目前 Omnigent UI 的 Hermes「Configure session」按鈕停用，使用者仍需從插件設定頁選模型並開啟已驗證對話。
 
-公開 main 已在 GitHub CI 的 3.12／3.13／3.14 通過；另有 5 項 Node 測試。主站透過原生 Plugins Git pull 更新至公開來源，HTTP 200，配對及直接執行同意保留，checkout 乾淨。舊截圖站缺少新版宿主的 owned Git checkout 記錄，原生更新明確拒絕；改以官方 Git 強制重裝成功。長時間與多人模型負載未驗收。
+公開 main 已在 GitHub CI 的 3.12／3.13／3.14 通過；另有 6 項 Node 測試。主站透過原生 Plugins Git pull 更新至公開來源，HTTP 200，配對及直接執行同意保留，checkout 乾淨。舊截圖站缺少新版宿主的 owned Git checkout 記錄，原生更新明確拒絕；改以官方 Git 強制重裝成功。長時間與多人模型負載未驗收。
 
 Luna 已通過一般回覆、terminal 及模型切換。該模型曾用包含多個詞的 `tool_search` 找不到 MCP 工具；MCP 握手、原生註冊與 Sol 指定工具的實際呼叫均正常。需要此工具時可使用 `tool_describe` 指定 `mcp__omnigent__sys_session_get_info`，再以 `tool_call` 呼叫；不把模型自主搜尋失敗視為工具呼叫通過。模型來源缺失的部署需要其管理者完成既有 provider 設定，不能以其他部署的金鑰代填。
 
@@ -82,7 +91,7 @@ Luna 已通過一般回覆、terminal 及模型切換。該模型曾用包含多
 
 ## 私有相容層與資料
 
-私有Omnigent固定0.16.0，測試server為0.17.0。Hermes原生支援的模型目錄／模型事件／launch override及profile路徑由插件在自己的uv venv補上。新版相容層只修改5個SDK檔案，先驗證版本、原碼錨點及編譯；保留原碼備份、SHA256與generation回條。非私有SDK、不同版本或被其他程式修改的來源皆拒絕。
+私有Omnigent固定0.16.0，測試server為0.17.0。Hermes原生支援的模型目錄／模型事件／launch override及profile路徑由插件在自己的uv venv補上。新版相容層只修改6個SDK檔案，先驗證版本、原碼錨點及編譯；保留原碼備份、SHA256與generation回條。非私有SDK、不同版本或被其他程式修改的來源皆拒絕。
 
 供應商憑證只在Hermes服務帳號與其私有per-session home使用。配對密碼不寫入對話、插件狀態、browser storage或API驗證錯誤；登入token由Omnigent官方私有store管理。公開repo不包含帳密、token或auth雜湊。
 

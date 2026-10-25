@@ -82,7 +82,7 @@ class FakeClient:
             return {"data": self.items}
         if path.endswith("/events"):
             self.cleanup_options = {"timeout_seconds": timeout_seconds, "refresh_auth": refresh_auth}
-            if self.stop_error:
+            if self.stop_error and payload.get('type') == 'stop_session':
                 raise self.stop_error
             return {"ok": True}
         raise AssertionError((method, path))
@@ -476,6 +476,16 @@ class AdapterTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["reason"], "SERVER_UNREACHABLE")
         self.assertEqual(result["cleanup"], "stopped")
+
+    def test_cleanup_failure_keeps_both_safe_error_codes(self):
+        self.client.poll_error = adapter.PluginError('native_terminal_start_failed', 'private startup details')
+        self.client.stop_error = adapter.PluginError('server_unreachable', 'private cleanup details')
+        result = self.plugin(engine='hermes').verify()
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['reason'], 'NATIVE_TERMINAL_START_FAILED')
+        self.assertEqual(result['cleanup'], 'stop_failed')
+        self.assertEqual(result['cleanupReason'], 'SERVER_UNREACHABLE')
+        self.assertNotIn('private', json.dumps(result))
 
     def test_invalid_model_never_creates_session(self):
         self.assert_code("INVALID_MODEL", lambda: self.plugin(engine="codex", model="invented-model").verify())

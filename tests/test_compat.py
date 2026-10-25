@@ -21,7 +21,7 @@ class CompatibilityTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.sdk = Path(self.temp.name)
         source = Path(omnigent.__file__).resolve().parent
-        for relative in ['host/connect.py', 'harnesses/hermes_native/bridge.py', 'harnesses/hermes_native/forwarder.py', 'runner/app.py', 'runner/native/orchestration.py']:
+        for relative in ['host/connect.py', 'harnesses/hermes_native/bridge.py', 'harnesses/hermes_native/forwarder.py', 'runner/app.py', 'runner/native/orchestration.py', 'onboarding/harness_readiness.py']:
             target = self.sdk / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / relative, target)
@@ -42,6 +42,24 @@ class CompatibilityTests(unittest.TestCase):
         namespace = {}
         exec(compile(ast.Module(body=[node], type_ignores=[]), '<config-keys>', 'exec'), namespace)
         self.assertIn('_config_version', namespace['_USER_CONFIG_KEYS'])
+
+    def test_readiness_probes_hermes_aliases_once_and_allows_cold_start(self):
+        source = next(after for file, before, after in patches.make_edits(self.sdk)
+                      if str(file).endswith('onboarding/harness_readiness.py'))
+        namespace = {}
+        exec(compile(source, '<private-readiness>', 'exec'), namespace)
+        seen = []
+        namespace['_harness_availability'] = lambda name: seen.append(name) or True
+        result = namespace['configured_harness_map']()
+        self.assertTrue(result['hermes-native'])
+        hermes = namespace['_HERMES_NATIVE_HARNESSES'] | {namespace['HERMES_KEY']}
+        self.assertEqual(len([name for name in seen if name in hermes]), 1)
+        timeouts = {}
+        namespace['harness_cli_installed'] = lambda key, timeout: timeouts.update({key: timeout}) or True
+        namespace['_binary_availability_reason']('hermes')
+        namespace['_binary_availability_reason']('pi')
+        self.assertEqual(timeouts['hermes'], 30)
+        self.assertEqual(timeouts['pi'], namespace['READINESS_CLI_PROBE_TIMEOUT_S'])
 
     def test_mcp_keeps_runner_temp_root_for_secure_bridge_validation(self):
         source = next(after for file, before, after in patches.make_edits(self.sdk)

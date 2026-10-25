@@ -123,6 +123,30 @@ def hermes_models():
             and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9/_.:\-]{0,200}', row['id'])]
 
 
+def shared_local_model_config(config):
+    model = config.get('model')
+    if not isinstance(model, dict) or model.get('provider') not in ('llamacpp', 'llama.cpp', 'llama-cpp'):
+        return config
+    env = dict(os.environ)
+    env.pop('PYTHONPATH', None)
+    env.pop('PYTHONHOME', None)
+    if env.get('HERMES_OMNIGENT_PYTHONPATH'):
+        env['PYTHONPATH'] = env['HERMES_OMNIGENT_PYTHONPATH']
+    env['HERMES_HOME'] = env['HERMES_OMNIGENT_PROFILE']
+    try:
+        result = subprocess.run([env['HERMES_OMNIGENT_PYTHON'],
+            str(Path(__file__).with_name('native_local_model.py'))], env=env,
+            capture_output=True, text=True, timeout=30)
+        if result.returncode or len(result.stdout) > 16384:
+            raise ValueError()
+        connection = json.loads(result.stdout)
+        if not isinstance(connection, dict) or set(connection) != {'provider', 'base_url', 'api_key', 'api_mode'}:
+            raise ValueError()
+        return {**config, 'model': {**model, **connection}}
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        raise RuntimeError('HERMES_LOCAL_MODEL_UNAVAILABLE') from None
+
+
 def selected_hermes_model(home, session_id):
     """Read the selected model, without exporting private native policy fields."""
     connection = sqlite3.connect(f'file:{Path(home) / "state.db"}?mode=ro', uri=True, timeout=1)

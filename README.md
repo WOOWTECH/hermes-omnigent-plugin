@@ -2,7 +2,7 @@
 
 讓 Hermes 透過自己的 Plugins 頁安裝 Omnigent 連線插件，啟用後開啟配對面板。每次新安裝／重新啟用都重新要求 HTTPS Server、帳號與遮罩密碼；當下存在的 Hermes／Claude Code／Codex／Pi 都必須收到實際回覆，才標記 ready。不補裝缺少的引擎。
 
-目前為 **v0.1.0-rc.9 候選版**；指定測試站已在使用者明確同意直接執行後通過真實對話驗證；其他部署環境仍需自行驗收，請先閱讀 [驗收紀錄](docs/commercial-readiness.md)。
+目前為 **v0.1.0-rc.10 候選版**；指定測試站已在使用者明確同意直接執行後通過真實對話驗證；其他部署環境仍需自行驗收，請先閱讀 [驗收紀錄](docs/commercial-readiness.md)。
 
 ## 從 Hermes Web 安裝
 
@@ -40,7 +40,7 @@ Omnigent 固定下載 0.16.0。優先沿用 PATH 或 Hermes bundle 中的 uv；�
 
 原生對話需要 tmux >=3.3 與符合既有 sandbox 政策的 bubblewrap。已有則沿用；Debian 容器缺少時，使用容器現有已簽章 APT index 的 SHA256 從 Debian HTTPS 套件源下載，解包到插件私有目錄。函式庫搜尋只套用 private native wrapper，不修改系統套件或其他引擎。索引缺少或引用已移除套件時，只在插件目錄更新官方簽章索引，同時支援 Debian security 套件來源。沒有適用的套件索引或平台時，會回報需要的依賴。
 
-Hermes 自身使用既有 provider、模型與 profile。Omnigent 官方 per-session home 會私有複用原有 `.env`／`auth.json`，不修改來源；配對密碼不放入這些資料。缺少訂閱／供應商登入的引擎會明確驗證失敗。
+Hermes 自身使用既有 provider、模型與 profile。本機 llama.cpp 模型會共用原 profile 已啟動、經 Hermes 擁有權驗證的 loopback 推論服務；未啟動時須先在 Hermes 的 Local models 設定啟動。Omnigent 官方 per-session home 會私有複用原有 `.env`／`auth.json`，不修改來源；配對密碼不放入這些資料。缺少訂閱／供應商登入的引擎會明確驗證失敗。
 
 Omnigent0.16 的 Hermes 原生支援尚缺模型目錄／切換與 `HERMES_HOME` 路徑處理，本插件只在自己安裝的 Omnigent venv 補上這些分支。相容層要求精確0.16.0與原碼錨點，拒絕修改系統或其他插件的 Omnigent；原始碼私有備份與SHA256收據保存在插件狀態目錄。模型由 Hermes 官方 inventory 載入，只列出當前 provider 的識別碼。對直接設定於 `model` 的 custom endpoint，使用原生 runtime provider 憑證解析與 `/models` 探索，避免原生空金鑰探測只顯示預設模型。清單保留供應商提供的替代模型；模型滿載時可手動選擇另一個模型再驗證。模型出現在清單不代表當下容量或所有工具功能已通過。
 
@@ -51,6 +51,8 @@ Omnigent0.16 的 Hermes 原生支援尚缺模型目錄／切換與 `HERMES_HOME`
 預設保留隔離。若使用者明確勾選「允許 Hermes 直接執行」，只將此插件的 Hermes 原生對話設為 `sandbox=none`，沿用該容器原本檔案／網路權限；其他引擎的隔離不變。勾選不是預設，也不是模型工具可傳入的欄位；新登入／重新啟用要重新選擇。已執行的 host 模式維持到取消連結或受控重新載入。
 
 Hermes 0.22 的直接執行模式會為插件對話建立專用 Gateway。只管理該服務 UID 與對話目錄內的程序，停止對話時連同專用 Gateway 清理；原 Hermes profile 的 Gateway 不受影響。新對話的原生資料與轉送進度保存在 `$HERMES_HOME/omnigent-plugin/sessions`，應隨 Hermes profile 一起掛載持久化磁碟。重新開啟對話沿用原生對話 ID 與轉送進度，保留上下文。升級時可將仍存在於舊容器暫存目錄、已停止且轉送完成的對話，透過 Hermes 原生匯出／匯入介面搬到私有持久化目錄，重新建立原生 profile 綁定；原始暫存資料保留，已被刪除的舊暫存資料無法復原。插件終端使用明確暗色設定，避免瀏覽器延遲回應背景色探測時被誤當成聊天文字。
+
+PVC 掛載可能增加群組權限。插件會以不跟隨符號連結的方式開啟並核對自身目錄擁有者，再恢復 `0700`；不修改其他使用者目錄。驗證失敗時，設定頁分別呈現對話錯誤與停止結果。Hermes 冷啟動版本探測期限為 30 秒，host 同一輪只探測一次 Hermes，各別引擎仍需實際回覆才算通過。
 
 首次更新相容層／執行模式時，插件核驗 PID、server、UID 與設定目錄，只重新載入自己管理的 host，保留登入。外部管理器的 host 不會被插件重啟。
 

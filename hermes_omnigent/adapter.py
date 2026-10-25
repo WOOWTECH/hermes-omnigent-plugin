@@ -823,8 +823,9 @@ class Plugin:
                 client.request("POST", f"/v1/sessions/{quote(session_id, safe='')}/events", {"type": "stop_session", "data": {}},
                                timeout_seconds=15.0, refresh_auth=False)
                 result["cleanup"] = "stopped"
-            except PluginError:
+            except PluginError as error:
                 result["cleanup"] = "stop_failed"
+                result["cleanupReason"] = error.code if re.fullmatch(r"[A-Z_][A-Z_0-9]{0,63}", error.code) else "SESSION_STOP_FAILED"
         return result
 
 

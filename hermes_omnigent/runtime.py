@@ -38,6 +38,11 @@ class Failure(Exception):
         super().__init__(code)
 
 
+def failure_code(value, fallback):
+    """Receipts contain bounded codes, never provider response bodies."""
+    return value.upper() if isinstance(value, str) and re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]{0,63}', value) else fallback
+
+
 def read(path, default=None):
     try:
         value = json.loads(Path(path).read_text())
@@ -206,7 +211,7 @@ class Runtime:
                     cached = _cache.get(key)
                 if not cached or cached[0] < time.monotonic():
                     probe = subprocess.run([binary, '-V' if name == 'tmux' else '--version'],
-                                           capture_output=True, text=True, timeout=8, env=env)
+                                           capture_output=True, text=True, timeout=30 if name == 'hermes' else 8, env=env)
                     match = re.search(r'(?<!\d)(\d+\.\d+(?:\.\d+)?[a-z]?)', probe.stdout + probe.stderr)
                     entry = {'available': probe.returncode == 0, 'path': binary,
                              'version': match.group(1) if match else None}
@@ -510,11 +515,15 @@ class Runtime:
                                  **({'model': model} if model else {}))
             data = response.get('data') or {}
             ok = response.get('ok') is True and data.get('ok') is True and data.get('reply') == SENTINEL and data.get('cleanup') == 'stopped'
+            reason = data.get('reason') or response.get('error', {}).get('code')
+            if not reason and data.get('cleanup') == 'stop_failed':
+                reason = 'SESSION_STOP_FAILED'
             receipts[name] = {'engine': name, 'server': state['server'], 'hostId': host_id,
                               'cliVersion': deps[name].get('version'), 'checkedAt': time.time(), 'ok': ok,
                               **{key: data[key] for key in ('model', 'cleanup', 'sessionId', 'url', 'nativeSubmitRecovered') if key in data},
-                              **({'reply': SENTINEL} if ok else {'reason': 'SESSION_STOP_FAILED' if data.get('cleanup') == 'stop_failed'
-                                  else data.get('reason') or response.get('error', {}).get('code') or 'NO_REPLY'})}
+                              **({'cleanupReason': failure_code(data.get('cleanupReason'), 'SESSION_STOP_FAILED')}
+                                 if data.get('cleanup') == 'stop_failed' else {}),
+                              **({'reply': SENTINEL} if ok else {'reason': failure_code(reason, 'NO_REPLY')})}
             write(self.root / 'verification.json', receipts)
         self.require_active()
         if not self.approved(state):

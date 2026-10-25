@@ -66,6 +66,38 @@ class SessionStoreTests(unittest.TestCase):
             session_store.migrate_legacy(self.target)
         self.assertTrue(self.target.is_symlink())
 
+    def test_volume_group_permissions_are_tightened_on_owned_plugin_directories(self):
+        self.target.parent.parent.mkdir(mode=0o770)
+        self.target.parent.parent.chmod(0o770)
+        session_store.migrate_legacy(self.target)
+        for path in (self.target.parent.parent, self.target.parent, self.target):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+        for path in (self.target.parent.parent, self.target.parent, self.target, self.target / 'hermes_home'):
+            path.chmod(0o770)
+        session_store.migrate_legacy(self.target)
+        for path in (self.target.parent.parent, self.target.parent, self.target, self.target / 'hermes_home'):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+
+    def test_symlink_plugin_root_is_never_chmodded_or_followed(self):
+        foreign = self.root / 'unrelated'
+        foreign.mkdir(mode=0o750)
+        mode = foreign.stat().st_mode
+        self.target.parent.parent.symlink_to(foreign, target_is_directory=True)
+        with self.assertRaisesRegex(RuntimeError, 'DIRECTORY_INVALID'):
+            session_store.migrate_legacy(self.target)
+        self.assertEqual(foreign.stat().st_mode, mode)
+        self.assertFalse((foreign / 'sessions').exists())
+
+    def test_directory_owned_by_another_user_is_never_repaired(self):
+        from types import SimpleNamespace
+        path = self.profile / 'omnigent-plugin'
+        path.mkdir(mode=0o770)
+        with patch.object(session_store.os, 'fstat', return_value=SimpleNamespace(
+                st_uid=os.getuid() + 1, st_mode=0o40770)), patch.object(session_store.os, 'fchmod') as chmod:
+            with self.assertRaisesRegex(RuntimeError, 'DIRECTORY_INVALID'):
+                session_store.prepare_private_directory(path)
+            chmod.assert_not_called()
+
     def test_migration_refuses_active_gateway(self):
         (self.source / 'hermes_home/.omnigent-gateway.json').write_text('{"pid":42}')
         with patch.object(native_gateway, 'owned_process', return_value=True):

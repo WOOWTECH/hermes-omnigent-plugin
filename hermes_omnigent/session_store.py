@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import tempfile
 import time
@@ -29,6 +30,28 @@ def _private(path):
         raise RuntimeError('HERMES_SESSION_DIRECTORY_INVALID')
 
 
+def prepare_private_directory(path):
+    """Restore owner-only access after a PVC fsGroup permission adjustment.
+
+    Only plugin-owned directories are callers. Open without following a final
+    symlink and check ownership on the descriptor before changing permissions.
+    Legacy sources retain their strict validation; they are never repaired.
+    """
+    try:
+        path.mkdir(mode=0o700, exist_ok=True)
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            info = os.fstat(descriptor)
+            if info.st_uid != os.getuid() or not stat.S_ISDIR(info.st_mode):
+                raise RuntimeError('HERMES_SESSION_DIRECTORY_INVALID')
+            if stat.S_IMODE(info.st_mode) != 0o700:
+                os.fchmod(descriptor, 0o700)
+        finally:
+            os.close(descriptor)
+    except OSError:
+        raise RuntimeError('HERMES_SESSION_DIRECTORY_INVALID') from None
+
+
 def migrate_legacy(target):
     """Copy durable state from a stopped pre-rc.9 conversation, without deleting it.
 
@@ -44,12 +67,14 @@ def migrate_legacy(target):
         raise RuntimeError('HERMES_SESSION_DIRECTORY_INVALID')
     if target.is_symlink():
         raise RuntimeError('HERMES_SESSION_DIRECTORY_INVALID')
-    if target.exists():
-        _private(target)
-        return
     for path in (target.parent.parent, target.parent):
-        path.mkdir(mode=0o700, parents=True, exist_ok=True)
-        _private(path)
+        prepare_private_directory(path)
+    if target.exists():
+        prepare_private_directory(target)
+        home = target / 'hermes_home'
+        if home.exists() or home.is_symlink():
+            prepare_private_directory(home)
+        return
     source = legacy_root / target.name
     if not source.exists():
         return
