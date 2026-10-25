@@ -42,6 +42,21 @@ class RuntimeTests(unittest.TestCase):
     def pair(self):
         return self.runtime.initialize('https://server.example', 'account', 'do-not-persist-this-password')
 
+    def test_authenticated_upgrade_refreshes_resident_host_without_pairing(self):
+        self.runtime.lifecycle()
+        self.pair()
+        self.runtime._watcher = True
+        write(self.runtime.root / 'compatibility.json', {'generation': 'previous'})
+        with patch.object(self.runtime, 'start') as start:
+            self.runtime.activate(prepare=True)
+            start.assert_called_once_with('restore')
+
+    def test_unpaired_upgrade_prepares_without_restoring_old_auth(self):
+        self.runtime._watcher = True
+        with patch.object(self.runtime, 'start') as start:
+            self.runtime.activate(prepare=True)
+            start.assert_called_once_with('prepare')
+
     def test_bundled_uv_is_discovered_when_host_has_no_pip_or_uv_on_path(self):
         package = self.home / 'bundle/hermes_cli'
         package.mkdir(parents=True)

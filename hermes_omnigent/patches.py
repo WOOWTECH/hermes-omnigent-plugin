@@ -1,7 +1,7 @@
 """Exact source transformations of Omnigent0.16 in the plugin-owned venv."""
 from pathlib import Path
 
-MARKER = '# hermes-omnigent-plugin compatibility v13'
+MARKER = '# hermes-omnigent-plugin compatibility v14'
 
 
 def make_edits(sdk, source_overrides=None):

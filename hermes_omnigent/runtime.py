@@ -624,9 +624,14 @@ class Runtime:
                 deps = self.discover()
                 from .patches import MARKER
                 compatibility = read(self.root / 'compatibility.json')
+                state = self.state()
+                approved = self.approved(state) and bool(state.get('server'))
                 if not deps.get('omnigent', {}).get('available') or not deps.get('tmux', {}).get('available') or compatibility.get('generation') != MARKER:
-                    self.start('prepare')
-                elif self.state().get('loginConfirmed') and not self.status().get('host', {}).get('connected'):
+                    # An authenticated upgrade must also refresh its resident
+                    # host after installing the new SDK generation.
+                    self.start('restore' if approved else 'prepare')
+                elif approved and (read(self.root / 'host-runtime.json') != self.host_generation()
+                                   or not self.status().get('host', {}).get('connected')):
                     self.start('restore')
             except Failure:
                 pass

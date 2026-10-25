@@ -31,7 +31,7 @@
 
 兩台皆只連結當下已安裝的 Hermes；沒有下載 Claude Code、Codex 或 Pi。兩台皆有 `/opt/data` PVC。原站曾缺少 checkout 與插件資料的原因仍未知，不能因此推斷 PVC 故障。
 
-目前 127 項 Python 回歸與 5 項 Node 介面測試通過；現場測試另外列示。
+目前 129 項 Python 回歸與 5 項 Node 介面測試通過；現場測試另外列示。
 
 ### 本次修正與證據
 
@@ -42,6 +42,7 @@
 - 新版 Hermes 給工具設定個別 TMPDIR；MCP 現在明確使用建立 bridge 時的目錄，保留原 SDK 的目錄擁有者與私有權限驗證。
 - 初次對話提交允許有界的原生啟動等待；網路不可達與請求逾時分開回報。停止已退出的 terminal 可重複執行，缺少 tmux 或傳輸錯誤不算停止成功。
 - 原生背景色探測的延遲 OSC11 回應曾被當成使用者訊息。插件終端改用 Hermes 支援的明確暗色設定，避免發出該探測；送達確認必須匹配新寫入的使用者全文。已從正式網頁重跑續聊、原生工具、MCP 工具成功。
+- 一般更新後若私有 SDK 或 resident host 的 generation 過期，已核准的部署自動 restore 以更新自己的 host；未配對部署只準備依賴，不沿用舊登入。
 - 前端共用進行中的 status 請求，避免慢回應期間疊加輪詢；失敗後可再次查詢。這是重疊請求修正，尚非多人壓力或長時間測試結論。
 - 原生 `on_unload` 在停用時留下持久化撤銷識別；即使操作持鎖、快速停用又啟用，舊登入與直接執行同意也不再有效。一般 hot reload 保留核准。
 - 新版強制重裝會保留未追蹤檔案。安裝識別加入 `.git/config` 時間戳記：一般 Git pull／原生 staging copy 保留識別，新 clone 使登入與直接執行同意失效。舊 marker 升級會辨別一般更新及新 clone；正式強制重裝、重新配對與實際回覆已通過。
@@ -50,7 +51,7 @@
 
 對話內模型切換透過 Hermes 原生 Gateway 的 authenticated control ticket、revision／execution generation 檢查進行，再確認持久化模型設定；不自動核准供應商／帳號切換的額外確認。停止後冷啟動與暖機後的 Omnigent 更新 API 均已成功切換至 Luna，原生設定亦一致；目前 Omnigent UI 的 Hermes「Configure session」按鈕停用，使用者仍需從插件設定頁選模型並開啟已驗證對話。
 
-公開 main 的 127 項 Python 回歸已在 GitHub CI 的 3.12／3.13／3.14 通過；另有 5 項 Node 測試。最新公開來源更新安裝仍在驗收，長時間與多人模型負載未驗收。
+公開 main 已在 GitHub CI 的 3.12／3.13／3.14 通過；另有 5 項 Node 測試。主站透過原生 Plugins Git pull 更新至公開來源，HTTP 200，配對及直接執行同意保留，checkout 乾淨。舊截圖站缺少新版宿主的 owned Git checkout 記錄，原生更新明確拒絕；改以官方 Git 強制重裝成功。長時間與多人模型負載未驗收。
 
 Luna 已通過一般回覆、terminal 及模型切換。該模型曾用包含多個詞的 `tool_search` 找不到 MCP 工具；MCP 握手、原生註冊與 Sol 指定工具的實際呼叫均正常。需要此工具時可使用 `tool_describe` 指定 `mcp__omnigent__sys_session_get_info`，再以 `tool_call` 呼叫；不把模型自主搜尋失敗視為工具呼叫通過。模型來源缺失的部署需要其管理者完成既有 provider 設定，不能以其他部署的金鑰代填。
 
