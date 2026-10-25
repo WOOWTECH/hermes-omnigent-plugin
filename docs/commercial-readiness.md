@@ -24,6 +24,8 @@
 - 重跑第二站 `--reasoning none --toolsets terminal` 比較，183.20 秒後仍為 `REPLY_TIMEOUT`，取得停止回條。前次遭 rollout 中斷、尚未送出使用者訊息的驗證對話也已按 ID／host／標題核對並停止，專用 Gateway 不再執行。
 - 第二站當時 cgroup CPU 上限為 2 核、記憶體上限 6 GiB，已有 CPU throttling；模型服務提供 4 個 slot，各自 context 上限 262144。完整 Hermes 測試期間確實觀察到模型正在處理 prompt、尚無 decoded token。這些是效能診斷證據，尚不足以證明限流或 context 設定就是逾時根因；未變更共用模型服務設定。
 - 最後狀態查核：主站 `ready`、第二站 `needs-verification`／`INCOMPLETE_CHAT_VERIFICATION`；兩站 host 皆在線。第二站保持原有本機模型設定，未因最小 API 測試成功而誤標完整對話通過。
+- 主站同一帳號同時建立兩個全新 Sol 對話，各自收到不同的隨機識別字，含啟動／回覆／停止分別耗時 43.65、45.79 秒。兩個私有 SQLite 歷史各自保有自己的識別字且不含另一個，兩個專用 Gateway 皆已退出。這是有界雙對話隔離驗收，尚不代表跨帳號或長時間壓力測試。
+- 從候選安裝壓縮包解出追蹤來源後，重新執行 140 項 Python 與 6 項 Node 測試均通過；壓縮包排除登入資料、安裝識別、快取與舊發行檔。
 
 ## 2026-10-25 重新驗收
 
