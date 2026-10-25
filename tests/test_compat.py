@@ -46,7 +46,15 @@ class CompatibilityTests(unittest.TestCase):
     def test_mcp_keeps_runner_temp_root_for_secure_bridge_validation(self):
         source = next(after for file, before, after in patches.make_edits(self.sdk)
                       if str(file).endswith('hermes_native/bridge.py'))
-        self.assertIn('"env": {"TMPDIR": str(_BRIDGE_ROOT.parent.parent)}', source)
+        self.assertIn('"TMPDIR": tempfile.gettempdir()', source)
+        self.assertIn('"HERMES_OMNIGENT_PROFILE": os.environ.get("HERMES_OMNIGENT_PROFILE", "")', source)
+
+    def test_legacy_migration_precedes_every_initial_bridge_directory_creation(self):
+        source = next(after for file, before, after in patches.make_edits(self.sdk)
+                      if str(file).endswith('hermes_native/bridge.py'))
+        node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)
+                    and n.name == 'bridge_dir_for_session_id')
+        self.assertIn('migrate_legacy(target)', ast.unparse(node))
 
     def test_forwarder_probe_never_creates_an_empty_native_database(self):
         edits = patches.make_edits(self.sdk)
@@ -179,3 +187,79 @@ class CompatibilityTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class NativeModelSelectionTests(unittest.TestCase):
+    def test_committed_policy_wins_over_stale_session_model(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            db = sqlite3.connect(home / 'state.db')
+            db.execute('CREATE TABLE sessions (id TEXT, model TEXT, chat_id TEXT)')
+            db.execute('CREATE TABLE state_meta (key TEXT, value TEXT)')
+            db.execute('INSERT INTO sessions VALUES (?,?,?)', ('tip', 'old', 'logical'))
+            db.execute('INSERT INTO state_meta VALUES (?,?)', ('gateway.local_policy.v1:logical',
+                json.dumps({'policy': {'model': 'new', 'private': 'never-export'}})))
+            db.commit();db.close()
+            self.assertEqual(compat.selected_hermes_model(home, 'tip'), 'new')
+            with self.assertRaisesRegex(RuntimeError, 'STATE_UNAVAILABLE'):
+                compat.selected_hermes_model(home, 'missing')
+
+    def test_slash_command_is_sent_once_and_confirmed_by_policy_not_chat_rows(self):
+        from omnigent.harnesses.hermes_native import bridge, forwarder
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            with patch.object(forwarder, '_read_state', return_value=types.SimpleNamespace(hermes_session_id='sid')), \
+                    patch.object(bridge, 'read_hermes_home', return_value=home), \
+                    patch.object(compat, 'selected_hermes_model', side_effect=['old', 'old', 'new']), \
+                    patch.object(bridge, '_wait_for_tmux_info', return_value={'socket_path': '/own', 'tmux_target': 'own'}), \
+                    patch.object(bridge, '_session_alive', return_value=True), \
+                    patch.object(bridge, '_deliver_once') as deliver, patch.object(compat.time, 'sleep'):
+                compat.inject_hermes_model(home, 'new')
+                self.assertEqual(deliver.call_count, 1)
+                self.assertEqual(deliver.call_args.args[2], '/model new')
+
+    def test_same_committed_model_is_idempotent_without_touching_terminal(self):
+        from omnigent.harnesses.hermes_native import bridge, forwarder
+        with patch.object(forwarder, '_read_state', return_value=types.SimpleNamespace(hermes_session_id='sid')), \
+                patch.object(bridge, 'read_hermes_home', return_value=Path('/owned')), \
+                patch.object(compat, 'selected_hermes_model', return_value='current'), \
+                patch.object(bridge, '_wait_for_tmux_info') as wait:
+            compat.inject_hermes_model(Path('/owned'), 'current')
+            wait.assert_not_called()
+
+class NativeModelRPCTests(unittest.IsolatedAsyncioTestCase):
+    async def test_model_mutation_uses_revision_and_generation_fences(self):
+        from hermes_omnigent.native_model import apply_model
+        from unittest.mock import AsyncMock
+        client = types.SimpleNamespace(rpc=AsyncMock(side_effect=[{'revision': 4, 'execution_generation': 8}, {'status': 'applied'}]))
+        await apply_model(client, 'owned-session', 'new-model')
+        args = client.rpc.await_args_list[1]
+        self.assertEqual(args.args, ('session.mutate',))
+        self.assertEqual(args.kwargs['expected_revision'], 4)
+        self.assertEqual(args.kwargs['expected_generation'], 8)
+        self.assertEqual(args.kwargs['payload'], {'model': 'new-model'})
+
+    async def test_confirmation_required_is_never_automatically_approved(self):
+        from hermes_omnigent.native_model import apply_model
+        from unittest.mock import AsyncMock
+        client = types.SimpleNamespace(rpc=AsyncMock(side_effect=[{'revision': 4, 'execution_generation': 8}, {'status': 'confirmation_required', 'confirm': 'not-approved'}]))
+        with self.assertRaisesRegex(RuntimeError, 'CONFIRMATION_REQUIRED'):
+            await apply_model(client, 'owned-session', 'new-model')
+        self.assertEqual(client.rpc.await_count, 2)
+
+
+class ModelResetTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reset_selects_native_default_instead_of_acknowledging_without_change(self):
+        from omnigent.harnesses.hermes_native import bridge
+        with patch.object(compat, 'hermes_models', return_value=[{'id': 'default-model', 'isDefault': True}]), \
+                patch.object(bridge, 'bridge_dir_for_session_id', return_value=Path('/owned')), \
+                patch.object(compat, 'inject_hermes_model') as change:
+            result = await compat.change_model('owned-session', None)
+            self.assertEqual(result.status_code, 204)
+            change.assert_called_once_with(Path('/owned'), 'default-model')
+
+    async def test_reset_without_known_default_fails_without_mutation(self):
+        with patch.object(compat, 'hermes_models', return_value=[{'id': 'other'}]), \
+                patch.object(compat, 'inject_hermes_model') as change:
+            result = await compat.change_model('owned-session', None)
+            self.assertEqual(result.status_code, 400)
+            change.assert_not_called()

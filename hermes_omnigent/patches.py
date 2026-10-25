@@ -1,7 +1,7 @@
 """Exact source transformations of Omnigent0.16 in the plugin-owned venv."""
 from pathlib import Path
 
-MARKER = '# hermes-omnigent-plugin compatibility v8'
+MARKER = '# hermes-omnigent-plugin compatibility v12'
 
 
 def make_edits(sdk, source_overrides=None):
@@ -33,6 +33,19 @@ def make_edits(sdk, source_overrides=None):
 ''')
 
     def bridge(source):
+        anchor = '_BRIDGE_ROOT = Path(tempfile.gettempdir()) / f"omnigent-{stable_user_id()}" / "hermes-native"\n'
+        if source.count(anchor) != 1:
+            raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
+        source = source.replace(anchor, 'from hermes_omnigent.session_store import bridge_root as _profile_bridge_root\n'
+            '_BRIDGE_ROOT = _profile_bridge_root(Path(tempfile.gettempdir()) / f"omnigent-{stable_user_id()}" / "hermes-native")\n')
+        anchor = '    return _BRIDGE_ROOT / digest\n'
+        if source.count(anchor) != 1:
+            raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
+        source = source.replace(anchor, '''    from hermes_omnigent.session_store import migrate_legacy
+    target = _BRIDGE_ROOT / digest
+    migrate_legacy(target)
+    return target
+''')
         expected = ['Path.home() / ".hermes" / "config.yaml"', 'Path.home() / ".hermes" / ".env"',
                     'Path.home() / ".hermes" / "auth.json"']
         for anchor in expected:
@@ -50,7 +63,7 @@ def make_edits(sdk, source_overrides=None):
         # Hermes 0.22 gives child tools a per-profile TMPDIR. The existing
         # bridge belongs to the runner's temp root; keep secure-dir validation
         # pointed at that same root, without weakening its ownership checks.
-        source = source.replace(anchor, anchor + '            "env": {"TMPDIR": str(_BRIDGE_ROOT.parent.parent)},\n')
+        source = source.replace(anchor, anchor + '            "env": {"TMPDIR": tempfile.gettempdir(), "HERMES_OMNIGENT_PROFILE": os.environ.get("HERMES_OMNIGENT_PROFILE", "")},\n')
         anchor = '    if _await_new_message(db_path, baseline_id or 0, _DELIVERY_CONFIRM_TIMEOUT_S):\n'
         if source.count(anchor) != 2:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')

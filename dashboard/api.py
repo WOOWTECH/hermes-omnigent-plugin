@@ -66,9 +66,13 @@ async def pair(request: Request):
             raise ValueError()
         import json
         values = PairRequest.model_validate(json.loads(body))
+        from hermes_omnigent.adapter import normalize_server
+        server = normalize_server(values.server)
+        if not values.username.strip() or not values.password.get_secret_value():
+            raise ValueError()
     except Exception:
         raise HTTPException(400, detail='INVALID_PAIRING_REQUEST') from None
-    return perform(runtime.start, 'pair', server=values.server, username=values.username,
+    return perform(runtime.start, 'pair', server=server, username=values.username,
                    password=values.password.get_secret_value(), allowDirectHermes=values.allowDirectHermes)
 
 

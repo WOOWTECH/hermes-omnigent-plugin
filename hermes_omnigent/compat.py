@@ -123,16 +123,84 @@ def hermes_models():
             and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9/_.:\-]{0,200}', row['id'])]
 
 
+def selected_hermes_model(home, session_id):
+    """Read the selected model, without exporting private native policy fields."""
+    connection = sqlite3.connect(f'file:{Path(home) / "state.db"}?mode=ro', uri=True, timeout=1)
+    try:
+        row = connection.execute('SELECT model, chat_id FROM sessions WHERE id=?', (session_id,)).fetchone()
+        if row is None:
+            raise RuntimeError('HERMES_MODEL_STATE_UNAVAILABLE')
+        tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if 'state_meta' in tables:
+            saved = connection.execute('SELECT value FROM state_meta WHERE key=?',
+                ('gateway.local_policy.v1:' + (row[1] or session_id),)).fetchone()
+            if saved:
+                return json.loads(saved[0])['policy']['model']
+        return row[0]
+    finally:
+        connection.close()
+
+
+def select_native_model(home, session_id, model):
+    if os.environ.get('HERMES_OMNIGENT_DIRECT_HERMES') != '1':
+        return False
+    env = dict(os.environ)
+    env.pop('PYTHONPATH', None)
+    env.pop('PYTHONHOME', None)
+    if env.get('HERMES_OMNIGENT_PYTHONPATH'):
+        env['PYTHONPATH'] = env['HERMES_OMNIGENT_PYTHONPATH']
+    env['HERMES_HOME'] = str(home)
+    result = subprocess.run([env['HERMES_OMNIGENT_PYTHON'],
+        str(Path(__file__).with_name('native_model.py')), str(home), session_id, model],
+        env=env, capture_output=True, text=True, timeout=12)
+    if result.returncode == 3:
+        return False
+    if result.returncode or result.stdout.strip() != 'HERMES_MODEL_SELECTED':
+        raise RuntimeError('HERMES_MODEL_CHANGE_UNCONFIRMED')
+    if selected_hermes_model(home, session_id) != model:
+        raise RuntimeError('HERMES_MODEL_CHANGE_UNCONFIRMED')
+    return True
+
+
+def inject_hermes_model(bridge_dir, model):
+    from omnigent.harnesses.hermes_native import bridge
+    from omnigent.harnesses.hermes_native.forwarder import _read_state
+    state = _read_state(bridge_dir)
+    home = bridge.read_hermes_home(bridge_dir)
+    if not home or not state.hermes_session_id:
+        raise RuntimeError('HERMES_MODEL_STATE_UNAVAILABLE')
+    if selected_hermes_model(home, state.hermes_session_id) == model:
+        return
+    if select_native_model(home, state.hermes_session_id, model):
+        return
+    info = bridge._wait_for_tmux_info(bridge_dir, timeout_s=10)
+    if not bridge._session_alive(info['socket_path'], info['tmux_target']):
+        raise RuntimeError('HERMES_TERMINAL_UNAVAILABLE')
+    command = '/model ' + model
+    bridge._deliver_once(info['socket_path'], info['tmux_target'], command, bridge_dir,
+        bridge._submit_needle(command), settle_timeout_s=5)
+    # /model changes native policy; it deliberately creates no user transcript
+    # row. Confirm durable selection instead of retyping the command as a chat.
+    deadline = time.monotonic() + 15
+    while True:
+        if selected_hermes_model(home, state.hermes_session_id) == model:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError('HERMES_MODEL_CHANGE_UNCONFIRMED')
+        time.sleep(.2)
+
+
 async def change_model(session_id, model):
     from starlette.responses import JSONResponse, Response
+    rows = await asyncio.to_thread(hermes_models)
     if model is None:
-        return Response(status_code=204)
-    allowed = {row['id'] for row in await asyncio.to_thread(hermes_models)}
+        model = next((row['id'] for row in rows if row.get('isDefault')), None)
+    allowed = {row['id'] for row in rows}
     if model not in allowed:
         return JSONResponse({'error': 'invalid_model'}, status_code=400)
-    from omnigent.harnesses.hermes_native.bridge import bridge_dir_for_session_id, inject_user_message
+    from omnigent.harnesses.hermes_native.bridge import bridge_dir_for_session_id
     try:
-        await asyncio.to_thread(inject_user_message, bridge_dir_for_session_id(session_id), content='/model ' + model)
+        await asyncio.to_thread(inject_hermes_model, bridge_dir_for_session_id(session_id), model)
     except Exception:
         return JSONResponse({'error': 'hermes_model_change_failed'}, status_code=409)
     return Response(status_code=204)

@@ -16,12 +16,18 @@ import sys
 import tempfile
 import time
 
+if __package__:
+    from .session_store import bridge_root
+else:
+    from session_store import bridge_root
+
 
 def validate_home(value):
     home = Path(value)
-    base = Path(tempfile.gettempdir()) / f'omnigent-{os.getuid()}' / 'hermes-native'
+    legacy = Path(tempfile.gettempdir()) / f'omnigent-{os.getuid()}' / 'hermes-native'
+    base = home.parent.parent
     if (not home.is_absolute() or home.name != 'hermes_home'
-            or home.parent.parent != base or not re.fullmatch(r'[a-f0-9]{32}', home.parent.name)):
+            or base not in (legacy, bridge_root(legacy)) or not re.fullmatch(r'[a-f0-9]{32}', home.parent.name)):
         raise RuntimeError('HERMES_GATEWAY_HOME_INVALID')
     for path in (base.parent, base, home.parent, home):
         if path.is_symlink() or not path.is_dir() or path.stat().st_uid != os.getuid():

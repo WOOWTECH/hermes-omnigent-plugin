@@ -54,6 +54,16 @@ class APITests(unittest.TestCase):
         self.assertNotIn('never-echo-secret', response.text)
         self.assertNotIn('input', response.text)
 
+    def test_malformed_pair_is_rejected_before_revoking_a_working_connection(self):
+        for server, username, password in [('not-a-url', 'user', 'secret'),
+                ('https://server.example', '   ', 'secret'), ('https://server.example', 'user', '')]:
+            with self.subTest(server=server, username=username):
+                response = self.client.post(self.url + '/pair', json={
+                    'server': server, 'username': username, 'password': password}, headers=self.headers)
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(self.jobs)
+                self.assertNotIn('secret', response.text)
+
     def test_pair_response_contains_no_password_and_delivers_directly_to_job(self):
         values = {'server': 'https://server.example', 'username': 'user', 'password': 'ephemeral-secret'}
         response = self.client.post(self.url + '/pair', json=values, headers=self.headers)

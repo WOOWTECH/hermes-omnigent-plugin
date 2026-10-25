@@ -389,6 +389,18 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(self.runtime.installation_identity(), 'a' * 32)
             self.assertIn('clone', read(marker))
 
+    def test_rc8_marker_carried_into_a_fresh_clone_requires_new_approval(self):
+        checkout = self.home / 'checkout'
+        (checkout / '.git').mkdir(parents=True)
+        marker = checkout / '.omnigent-installation.json'
+        write(marker, {'id': 'a' * 32})
+        config = checkout / '.git/config'
+        config.write_text('[core]\n')
+        stamp = marker.stat().st_mtime_ns + 1000000000
+        os.utime(config, ns=(stamp, stamp))
+        with patch('hermes_omnigent.runtime.__file__', str(checkout / 'hermes_omnigent/runtime.py')):
+            self.assertNotEqual(self.runtime.installation_identity(), 'a' * 32)
+
 
 if __name__ == '__main__':
     unittest.main()

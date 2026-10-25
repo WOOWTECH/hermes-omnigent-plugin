@@ -1,10 +1,10 @@
 # Hermes Omnigent 候選版驗收紀錄
 
-版本：v0.1.0-rc.8。日期：2026-10-12 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
+版本：v0.1.0-rc.9 候選版。驗收更新：2026-10-25 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
 
 指定 Hermes0.19 Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
 
-## 2026-10-25 重新驗收（進行中，公開版仍為 rc.8）
+## 2026-10-25 重新驗收
 
 現場 Hermes 已升級至 **0.22.5／Python 3.14／Linux x64**，與 10 月 12 日的 0.19 不同。這次發現並修正新版的依賴、原生 Gateway、MCP 路徑與對話啟停相容性；以下僅列已取得的證據。
 
@@ -22,26 +22,35 @@
 | 停止／重連後的上下文 | 重啟插件 host 後，從網頁恢復同一對話，正確回憶停止前的測試識別字；對話轉送進度保留 |
 | 停用／重新啟用 | 原生 Plugins 停用後 API 拒絕操作（404）；重新啟用後空白配對欄位、直接執行未勾選，重新配對及實際回覆成功 |
 | 取消連結 | 正式 UI 取消後 host 離線、登入核准失效；空白欄位重新配對後收到實際回覆並恢復 ready |
-| GitHub | 公開 repo；這批修正尚未發布新版本 |
+| 公開 Git 強制重裝 | 從公開 main 安裝修正版本，乾淨 checkout；舊核准與直接執行同意失效，空白精靈重新配對及真實對話成功 |
+| Pod 重建 | 原工作確認閒置後重建到另一節點，PVC 重新掛載、映像 digest 相同、2/2 Ready；插件自動恢復 ready、原核准保留 |
+| 重建後的對話記憶 | 原暫存目錄已不存在；同一 Omnigent 對話從 PVC 恢復，正確回憶搬移及重建前的完整識別字 |
+| CLI acceptance | 服務帳號執行退出碼 0、ready、模型與模組目錄可用，無額外模型提示 |
+| API 錯誤輸入 | 未登入 401；錯誤網址 400、無效引擎 422，不回顯配對值、不撤銷有效配對 |
+| 有界併發查詢 | 3 批、每批 2 個 status 查詢，6/6 HTTP 200／ready，0.856～1.663 秒；不代表多人模型壓力驗收 |
 
 兩台皆只連結當下已安裝的 Hermes；沒有下載 Claude Code、Codex 或 Pi。兩台皆有 `/opt/data` PVC。原站曾缺少 checkout 與插件資料的原因仍未知，不能因此推斷 PVC 故障。
 
-目前 109 項 Python 回歸與 5 項 Node 介面測試通過；現場測試另外列示。
+目前 127 項 Python 回歸與 5 項 Node 介面測試通過；現場測試另外列示。
 
 ### 本次修正與證據
 
 - Hermes 新版以 `hermes_yaml` 與內附 uv 提供執行環境，插件現在能沿用；私有 SDK 的 Python import path 與 Hermes 自身依賴隔離，解決 MCP 套件版本衝突。
 - 精簡 Debian 映像沒有 APT index 時，在插件目錄下載官方簽章索引；支援 Debian security 套件來源，持續檢查索引提供的 SHA256。現場缺少 tmux／bubblewrap 時已成功下載與探測。
 - 保留原生設定 schema 版本；Omnigent transcript observer 不再提前建立空 `state.db`，避免 Hermes 初始化失敗。
-- 在明確同意直接執行時，以 Hermes 官方 unmanaged Gateway 支援每個 Omnigent 暫存 profile。只接受服務 UID 擁有的該對話目錄，以 PID／啟動時間／boot ID／HERMES_HOME 核對自己的 Gateway。使用程序限定的 `HERMES_GATEWAY_NO_SUPERVISE`，原 profile 的 s6 Gateway 不受影響。
+- 在明確同意直接執行時，以 Hermes 官方 unmanaged Gateway 支援每個 Omnigent 對話 profile。只接受服務 UID 擁有的該對話目錄，以 PID／啟動時間／boot ID／HERMES_HOME 核對自己的 Gateway。使用程序限定的 `HERMES_GATEWAY_NO_SUPERVISE`，原 profile 的 s6 Gateway 不受影響。
 - 新版 Hermes 給工具設定個別 TMPDIR；MCP 現在明確使用建立 bridge 時的目錄，保留原 SDK 的目錄擁有者與私有權限驗證。
 - 初次對話提交允許有界的原生啟動等待；網路不可達與請求逾時分開回報。停止已退出的 terminal 可重複執行，缺少 tmux 或傳輸錯誤不算停止成功。
 - 原生背景色探測的延遲 OSC11 回應曾被當成使用者訊息。插件終端改用 Hermes 支援的明確暗色設定，避免發出該探測；送達確認必須匹配新寫入的使用者全文。已從正式網頁重跑續聊、原生工具、MCP 工具成功。
 - 前端共用進行中的 status 請求，避免慢回應期間疊加輪詢；失敗後可再次查詢。這是重疊請求修正，尚非多人壓力或長時間測試結論。
 - 原生 `on_unload` 在停用時留下持久化撤銷識別；即使操作持鎖、快速停用又啟用，舊登入與直接執行同意也不再有效。一般 hot reload 保留核准。
-- 新版強制重裝會保留未追蹤檔案。安裝識別加入 `.git/config` 時間戳記：一般 Git pull／原生 staging copy 保留識別，新 clone 使登入與直接執行同意失效。舊 marker 首次升級保留同意。已通過回歸測試，仍待正式強制重裝實測。
+- 新版強制重裝會保留未追蹤檔案。安裝識別加入 `.git/config` 時間戳記：一般 Git pull／原生 staging copy 保留識別，新 clone 使登入與直接執行同意失效。舊 marker 升級會辨別一般更新及新 clone；正式強制重裝、重新配對與實際回覆已通過。
 
-尚待完成：公開新版強制重裝、重建恢復、併發及長時間測試。模型來源缺失的部署需要其管理者完成既有 provider 設定，不能以其他部署的金鑰代填。
+新增對話與轉送進度保存在 PVC 的 `omnigent-plugin/sessions`。仍存在的舊暫存對話在停止後以 SQLite backup 讀取已提交 WAL，再使用 Hermes 原生匯出／匯入 API 搬移歷史，重新建立 profile 綁定；不搬移舊 Gateway 身分、socket 或 relay 憑證。轉送未完成、程序仍在執行或路徑不是服務帳號私有目錄時拒絕搬移，原資料保留。已完成實際搬移、網頁記憶驗證及跨節點重建驗證。
+
+對話內模型切換透過 Hermes 原生 Gateway 的 authenticated control ticket、revision／execution generation 檢查進行，再確認持久化模型設定；不自動核准供應商／帳號切換的額外確認。停止後冷啟動與暖機後的 Omnigent 更新 API 均已成功切換至 Luna，原生設定亦一致；目前 Omnigent UI 的 Hermes「Configure session」按鈕停用，使用者仍需從插件設定頁選模型並開啟已驗證對話。
+
+尚待完成：最新公開更新安裝及長時間測試。模型來源缺失的部署需要其管理者完成既有 provider 設定，不能以其他部署的金鑰代填。
 
 ## 實機結果（2026-10-12 歷史紀錄）
 
@@ -80,7 +89,7 @@
 
 - 支援Bubblewrap的環境、Linux arm64及Hermes Desktop。
 - 目前不存在於測試容器的Claude Code、Codex、Pi，以及其他供應商。
-- MCP／skills的模型實際工具呼叫、所有13個模型的工具／圖片能力、多人併發與長時間負載。
-- 完整Pod重建復原。插件自有host重連已驗證；不以整個Gateway重啟替代。
+- 所有 14 個模型的工具／圖片能力、額外 skills、多人模型併發與長時間負載；Omnigent MCP 與原生 terminal 已完成實際工具呼叫。
+- 非本次指定容器映像的升級／回退；本次固定映像的跨節點 Pod 重建及對話恢復已驗證。
 
 此版本預設保留Bubblewrap。明確opt-in只跳過Hermes內層沙箱；不修改Pod capability、sysctl、AppArmor、host namespace或k3s設定。

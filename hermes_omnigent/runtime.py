@@ -270,9 +270,10 @@ class Runtime:
             if isinstance(identity, str) and re.fullmatch(r'[a-f0-9]{32}', identity):
                 if clone is not None and saved.get('clone') != clone:
                     self.require_profile_user()
-                    # Adopt the fingerprint on upgrade from rc.8 without
-                    # treating that ordinary plugin update as a new install.
-                    if saved.get('clone') is not None:
+                    # Legacy rc.8 markers have no clone fingerprint. A fresh
+                    # clone's config is newer than the carried marker (Hermes
+                    # preserves its mtime); a normal pull keeps the older config.
+                    if saved.get('clone') is not None or git_config.stat().st_mtime_ns > marker.stat().st_mtime_ns:
                         identity = uuid.uuid4().hex
                     write(marker, {'id': identity, 'clone': clone})
                 return identity
