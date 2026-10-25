@@ -39,6 +39,7 @@ ENGINES = {
 }
 SENTINEL = "OMNIGENT_CONNECTION_OK"
 PROBE_PROMPT = f"Reply exactly {SENTINEL}. Do not use tools or modify any files."
+NATIVE_START_SETTLE_SECONDS = {"claude": 3.0, "hermes": 10.0}
 
 
 class PluginError(Exception):
@@ -684,6 +685,13 @@ class Plugin:
         return False
 
     @staticmethod
+    def has_user_message(items: object) -> bool:
+        if not isinstance(items, list):
+            return False
+        return any(isinstance(item, dict) and item.get("type") == "message" and item.get("role") == "user"
+                   for item in items)
+
+    @staticmethod
     def exact_probe_draft(pane: str) -> bool:
         """Match the entire fixed probe in the last framed chat composer.
 
@@ -763,69 +771,87 @@ class Plugin:
             raise PluginError("invalid_model", "選取的模型不在此 host 的實際模型清單內。")
         if self.clock() >= deadline:
             raise PluginError("verify_timeout", "取得 host 與模型清單已超過驗證等待時間，尚未建立測試對話。")
-        body = {"agent_id": engine["agentId"], "host_id": catalog["host"]["id"], "workspace": str(self.workspace),
-                "title": f"Hermes Omnigent connection check · {key}", "harness_override": ENGINES[key]["harness"]}
-        if selected:
-            body["model_override"] = selected
-        if key == "claude":
-            # The no-tools health probe uses this session's ordinary attended
-            # mode. Auto mode can present a first-run dialog that consumes the
-            # native bridge's submit key; do not drive or approve that dialog.
-            body["terminal_launch_args"] = ["--permission-mode", "default"]
-        created = client.request("POST", "/v1/sessions", body)
-        session_id = created.get("id") or created.get("session_id")
-        if not isinstance(session_id, str) or not session_id:
-            raise PluginError("invalid_session_response", "Server 沒有回傳已建立的驗證對話 ID。")
-        result = {"engine": key, "ok": False, "reply": None, "sessionId": session_id,
-                  "url": f"{server}/c/{quote(session_id, safe='')}", "model": selected, "reason": "REPLY_TIMEOUT"}
-        try:
-            # Claude 2.1 can mount its initial Auto mode dialog after the first
-            # composer paint. In live tests an immediate first event left the
-            # probe in the draft after that dialog consumed Enter. Allow the
-            # newly created TUI to settle before sending the one test message.
-            # This is bounded by the same deadline and never answers a dialog,
-            # retries a prompt, or changes the user's permission policy.
+        max_attempts = 2 if key == "hermes" else 1
+        result = None
+        for attempt in range(1, max_attempts + 1):
+            if self.clock() >= deadline:
+                if result is None:
+                    raise PluginError("verify_timeout", "取得 host 與模型清單已超過驗證等待時間，尚未建立測試對話。")
+                result["reason"] = "VERIFY_TIMEOUT"
+                break
+            body = {"agent_id": engine["agentId"], "host_id": catalog["host"]["id"], "workspace": str(self.workspace),
+                    "title": f"Hermes Omnigent connection check · {key}" + (f" · retry {attempt}" if attempt > 1 else ""),
+                    "harness_override": ENGINES[key]["harness"]}
+            if selected:
+                body["model_override"] = selected
             if key == "claude":
-                self.sleep(min(3.0, max(0.0, deadline - self.clock())))
-                if self.clock() >= deadline:
-                    result["reason"] = "NATIVE_START_TIMEOUT"
-                    return result
-            # Follow the web composer: native TUI harnesses may never consume
-            # initial_items passed on creation, so deliver one explicit event.
-            client.request("POST", f"/v1/sessions/{quote(session_id, safe='')}/events", {
-                "type": "message", "data": {"role": "user", "content": [
-                    {"type": "input_text", "text": PROBE_PROMPT}]}},
-                timeout_seconds=max(1.0, min(90.0, deadline - self.clock())))
-            recover_after = self.clock() + 8.0
-            while True:
-                page = client.request("GET", f"/v1/sessions/{quote(session_id, safe='')}/items?limit=100&order=desc")
-                if self.assistant_sentinel(page.get("data")):
-                    result.update(ok=True, reply=SENTINEL, reason=None)
-                    break
-                failure = next((item.get("code") for item in page.get("data", [])
-                                if isinstance(item, dict) and item.get("type") == "error"
-                                and isinstance(item.get("code"), str)
-                                and re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,63}", item["code"])), None)
-                if failure:
-                    result["reason"] = failure.upper()
-                    break
-                if self.clock() >= deadline:
-                    break
-                if key == 'claude' and self.clock() >= recover_after and deadline - self.clock() > 10 \
-                        and not result.get('nativeSubmitRecovered'):
-                    if self.probe_submit(session_id):
-                        result['nativeSubmitRecovered'] = True
-                self.sleep(2)
-        except PluginError as error:
-            result["reason"] = error.code
-        finally:
+                # The no-tools health probe uses this session's ordinary attended
+                # mode. Auto mode can present a first-run dialog that consumes the
+                # native bridge's submit key; do not drive or approve that dialog.
+                body["terminal_launch_args"] = ["--permission-mode", "default"]
+            created = client.request("POST", "/v1/sessions", body)
+            session_id = created.get("id") or created.get("session_id")
+            if not isinstance(session_id, str) or not session_id:
+                raise PluginError("invalid_session_response", "Server 沒有回傳已建立的驗證對話 ID。")
+            result = {"engine": key, "ok": False, "reply": None, "sessionId": session_id,
+                      "url": f"{server}/c/{quote(session_id, safe='')}", "model": selected,
+                      "reason": "REPLY_TIMEOUT", "attempts": attempt}
+            retry_unaccepted_probe = False
             try:
-                client.request("POST", f"/v1/sessions/{quote(session_id, safe='')}/events", {"type": "stop_session", "data": {}},
-                               timeout_seconds=15.0, refresh_auth=False)
-                result["cleanup"] = "stopped"
+                # A new Hermes TUI can drop its first event while initializing.
+                # Settle before sending, then retry only in a fresh session if the
+                # bridge reports that no user message was accepted. Never submit
+                # the same prompt twice to one session.
+                settle_seconds = NATIVE_START_SETTLE_SECONDS.get(key, 0.0)
+                if key == "hermes" and attempt > 1:
+                    settle_seconds += 10.0
+                if settle_seconds:
+                    self.sleep(min(settle_seconds, max(0.0, deadline - self.clock())))
+                    if self.clock() >= deadline:
+                        result["reason"] = "NATIVE_START_TIMEOUT"
+                        return result
+                # Follow the web composer: native TUI harnesses may never consume
+                # initial_items passed on creation, so deliver one explicit event.
+                client.request("POST", f"/v1/sessions/{quote(session_id, safe='')}/events", {
+                    "type": "message", "data": {"role": "user", "content": [
+                        {"type": "input_text", "text": PROBE_PROMPT}]}},
+                    timeout_seconds=max(1.0, min(90.0, deadline - self.clock())))
+                recover_after = self.clock() + 8.0
+                while True:
+                    page = client.request("GET", f"/v1/sessions/{quote(session_id, safe='')}/items?limit=100&order=desc")
+                    items = page.get("data")
+                    if self.assistant_sentinel(items):
+                        result.update(ok=True, reply=SENTINEL, reason=None)
+                        break
+                    failure = next((item.get("code") for item in items or []
+                                    if isinstance(item, dict) and item.get("type") == "error"
+                                    and isinstance(item.get("code"), str)
+                                    and re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,63}", item["code"])), None)
+                    if failure:
+                        result["reason"] = failure.upper()
+                        retry_unaccepted_probe = (key == "hermes" and attempt < max_attempts
+                                                  and failure.upper() == "RUNTIMEERROR"
+                                                  and not self.has_user_message(items))
+                        break
+                    if self.clock() >= deadline:
+                        break
+                    if key == 'claude' and self.clock() >= recover_after and deadline - self.clock() > 10 \
+                            and not result.get('nativeSubmitRecovered'):
+                        if self.probe_submit(session_id):
+                            result['nativeSubmitRecovered'] = True
+                    self.sleep(2)
             except PluginError as error:
-                result["cleanup"] = "stop_failed"
-                result["cleanupReason"] = error.code if re.fullmatch(r"[A-Z_][A-Z_0-9]{0,63}", error.code) else "SESSION_STOP_FAILED"
+                result["reason"] = error.code
+            finally:
+                try:
+                    client.request("POST", f"/v1/sessions/{quote(session_id, safe='')}/events", {"type": "stop_session", "data": {}},
+                                   timeout_seconds=15.0, refresh_auth=False)
+                    result["cleanup"] = "stopped"
+                except PluginError as error:
+                    result["cleanup"] = "stop_failed"
+                    result["cleanupReason"] = error.code if re.fullmatch(r"[A-Z_][A-Z_0-9]{0,63}", error.code) else "SESSION_STOP_FAILED"
+            if result["ok"] or not retry_unaccepted_probe or result["cleanup"] != "stopped":
+                break
         return result
 
 

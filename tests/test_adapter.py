@@ -184,6 +184,92 @@ class AdapterTests(unittest.TestCase):
         self.assertNotIn('policy', created)
         self.assertEqual(created['terminal_launch_args'], ['--permission-mode', 'default'])
 
+    def test_hermes_probe_waits_for_native_tui_before_its_first_prompt(self):
+        original = self.client.request
+        events = []
+        def request(method, path, payload=None, **kwargs):
+            if path.endswith('/events') and payload.get('type') == 'message':
+                events.append(self.clock.clock())
+            return original(method, path, payload, **kwargs)
+        self.client.request = request
+        self.assertTrue(self.plugin(engine='hermes', model='real-model').verify()['ok'])
+        self.assertEqual(events, [10.0])
+
+    def test_hermes_startup_wait_respects_verification_deadline_and_cleans_up(self):
+        result = self.plugin(engine='hermes', timeoutSeconds=5).verify()
+        self.assertEqual(result['reason'], 'NATIVE_START_TIMEOUT')
+        self.assertEqual(result['cleanup'], 'stopped')
+        self.assertFalse(any(call[1].endswith('/events') and call[2].get('type') == 'message'
+                             for call in self.client.calls))
+
+    def test_hermes_verify_retries_unaccepted_probe_in_fresh_session_and_stops_both(self):
+        original = self.client.request
+        session_ids = iter(('first-verification-session', 'second-verification-session'))
+        current_session = []
+        messages = []
+        stopped = []
+        pages = {
+            'first-verification-session': [{'type': 'error', 'code': 'RUNTIMEERROR'}],
+            'second-verification-session': [{'type': 'message', 'role': 'assistant',
+                                             'content': [{'type': 'output_text', 'text': adapter.SENTINEL}]}],
+        }
+
+        def request(method, path, payload=None, **kwargs):
+            if method == 'POST' and path == '/v1/sessions':
+                self.client.calls.append((method, path, payload, True))
+                session_id = next(session_ids)
+                current_session.append(session_id)
+                return {'id': session_id}
+            if '/items?' in path:
+                self.client.calls.append((method, path, payload, True))
+                return {'data': pages[current_session[-1]]}
+            if path.endswith('/events'):
+                self.client.calls.append((method, path, payload, True))
+                session_id = current_session[-1]
+                if payload.get('type') == 'message':
+                    messages.append(session_id)
+                elif payload.get('type') == 'stop_session':
+                    stopped.append(session_id)
+                return {'ok': True}
+            return original(method, path, payload, **kwargs)
+
+        self.client.request = request
+        result = self.plugin(engine='hermes', model='real-model', timeoutSeconds=90).verify()
+
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['sessionId'], 'second-verification-session')
+        self.assertEqual(result['attempts'], 2)
+        self.assertEqual(messages, ['first-verification-session', 'second-verification-session'])
+        self.assertEqual(stopped, ['first-verification-session', 'second-verification-session'])
+        self.assertEqual(result['cleanup'], 'stopped')
+
+    def test_hermes_verify_never_retries_after_the_user_message_was_accepted(self):
+        self.client.items = [
+            {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': adapter.PROBE_PROMPT}]},
+            {'type': 'error', 'code': 'RUNTIMEERROR'},
+        ]
+
+        result = self.plugin(engine='hermes', model='real-model').verify()
+
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['attempts'], 1)
+        self.assertEqual(sum(path == '/v1/sessions' for _, path, _, _ in self.client.calls), 1)
+        self.assertEqual(sum(path.endswith('/events') and payload.get('type') == 'message'
+                             for _, path, payload, _ in self.client.calls), 1)
+        self.assertEqual(result['cleanup'], 'stopped')
+
+    def test_hermes_verify_does_not_retry_when_failed_session_cannot_be_stopped(self):
+        self.client.items = [{'type': 'error', 'code': 'RUNTIMEERROR'}]
+        self.client.stop_error = adapter.PluginError('server_unreachable', 'private cleanup detail')
+
+        result = self.plugin(engine='hermes', model='real-model').verify()
+
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['attempts'], 1)
+        self.assertEqual(result['cleanup'], 'stop_failed')
+        self.assertEqual(result['cleanupReason'], 'SERVER_UNREACHABLE')
+        self.assertEqual(sum(path == '/v1/sessions' for _, path, _, _ in self.client.calls), 1)
+
     def test_claude_startup_deadline_stops_session_without_sending_a_late_prompt(self):
         result = self.plugin(engine='claude', timeoutSeconds=1).verify()
         self.assertEqual(result['reason'], 'NATIVE_START_TIMEOUT')

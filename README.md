@@ -2,7 +2,7 @@
 
 讓 Hermes 透過自己的 Plugins 頁安裝 Omnigent 連線插件，啟用後開啟配對面板。每次新安裝／重新啟用都重新要求 HTTPS Server、帳號與遮罩密碼；當下存在的 Hermes／Claude Code／Codex／Pi 都必須收到實際回覆，才標記 ready。不補裝缺少的引擎。
 
-目前為 **v0.1.0-rc.10 候選版**；指定測試站已在使用者明確同意直接執行後通過真實對話驗證；其他部署環境仍需自行驗收，請先閱讀 [驗收紀錄](docs/commercial-readiness.md)。
+目前為 **v0.1.0-rc.12 候選版**。候選 adapter 已在 Hermes 0.22.5 測試站以 Omnigent 0.16.0 完成一次真實模型回覆與 session 清理；公開安裝版、瀏覽器對話及內部 LiteLLM 路由仍待驗收，請先閱讀 [驗收紀錄](docs/commercial-readiness.md)。
 
 ## 從 Hermes Web 安裝
 

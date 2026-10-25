@@ -1,8 +1,20 @@
 # Hermes Omnigent 候選版驗收紀錄
 
-版本：v0.1.0-rc.10 候選版。驗收更新：2026-10-25 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
+版本：v0.1.0-rc.12 候選版。驗收更新：2026-10-25 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
 
 指定主站 Hermes 0.22.5／Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
+
+## rc.12 追加驗收
+
+- 第二站的 Hermes 原生目錄回傳 host 在線、Hermes engine ready，以及 13 個實際模型選項；Claude Code、Codex、Pi 在該容器均未安裝，插件正確回報缺少，不影響已安裝的 Hermes。
+- 第二站以插件即時驗證 `gpt-6-luna` 時，新 session 建立成功，但立即送出的探針在 Hermes TUI 尚未就緒時未寫入 transcript，回報 `RUNTIMEERROR`；測試 session 已停止，plugin 狀態保持 `needs-verification`。
+- 固定等待 10 秒的早期修正仍曾間歇失敗，證明延遲本身不能可靠解決 Hermes 首次事件遺失。候選版現在只在 `RUNTIMEERROR` 且 Omnigent items 沒有接受 user message 時，成功清理舊 session 後才用全新 session 重試一次；訊息已接受或清理失敗就不重送。重試與這兩個安全條件有回歸測試覆蓋。
+- 以目前工作樹的候選 adapter.py 在實際 Hermes 0.22.5 容器內執行一次性 Omnigent session，模型 `gpt-5.6-sol` 精確回覆 `OMNIGENT_CONNECTION_OK`，session 清理結果為 `stopped`。這是 adapter 實際對話驗證，不代表公開 repo 已安裝版本或瀏覽器 UI 已完成驗收。
+- 測試容器 `hermes config get approvals.mode` 回報 `smart`，即低風險命令自動通過、危險或不確定命令仍要求確認；未將 profile 改成 `off`／YOLO。
+- 第二站目前讀取到的有效 Hermes 設定為 `openai-codex`／`gpt-6.1-sol`，沒有自訂 provider。這次沒有改寫該 profile 或其登入資料；安裝修正後仍須在第二站重跑插件驗證。
+- 指定 LiteLLM Gateway 的 live `/model/info` 顯示 19 個 Sol／Luna 模型 ID，專用 alias 查無既有金鑰。Hermes pod 對外域名回傳 403；對內部 Service 的 TCP 4000 連線遭拒。兩側 NetworkPolicy 目前分別未允許第二站 Hermes 到 Gateway 的流量。
+- 兩條只允許 Hermes 與內部 LiteLLM 之間 TCP 4000 的 NetworkPolicy 已通過 server-side dry run；套用被自動審核拒絕，因為「都同意」未被判定為對這項跨 namespace 持續變更的明確授權。規則尚未套用，也沒有建立推論金鑰或修改 Gateway／Hermes provider；已送出逐條說明的確認提示。
+- Omnigent 0.16.0 下 Python 3.12、3.13、3.14 各 145 項測試全數通過；6 項 Node 測試與 Dashboard 語法檢查亦通過。
 
 ## rc.10 追加驗收
 
