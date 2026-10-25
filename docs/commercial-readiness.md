@@ -17,7 +17,7 @@
 | Sol 真實對話 | `chatgpt/gpt-5.6-sol` 收到 `OMNIGENT_CONNECTION_OK`，停止成功，專用 Gateway 確認已退出 |
 | Luna 正式 UI 驗證 | 從設定頁選取 `chatgpt/gpt-5.6-luna`，實際回覆與停止皆成功 |
 | Omnigent 對話入口 | 開啟正確對話；正常登入後能看到真實驗證回覆 |
-| 後續網頁對話／工具／MCP | 已收到全新識別字的續聊回覆；`terminal` 執行 `pwd`，Omnigent `tool_describe`／`tool_call` 讀取本測試對話，服務端工具回條與輸出皆存在 |
+| 後續網頁對話／工具／MCP | 已收到全新識別字的續聊回覆；`terminal` 執行 `pwd`，Omnigent `tool_describe`／`tool_call` 讀取本測試對話，服務端工具回條與輸出皆存在；持久化與跨節點重建後，再以 Sol 完成網頁回覆、terminal、明確指定名稱的 MCP 工具呼叫，回條包含本測試對話 ID 且無 error 項目 |
 | 截圖測試站 782fd73d | 插件已配對、host 在線；原生 Hermes 缺少有效模型 provider 憑證，尚不能驗收實際對話 |
 | 停止／重連後的上下文 | 重啟插件 host 後，從網頁恢復同一對話，正確回憶停止前的測試識別字；對話轉送進度保留 |
 | 停用／重新啟用 | 原生 Plugins 停用後 API 拒絕操作（404）；重新啟用後空白配對欄位、直接執行未勾選，重新配對及實際回覆成功 |
@@ -50,7 +50,9 @@
 
 對話內模型切換透過 Hermes 原生 Gateway 的 authenticated control ticket、revision／execution generation 檢查進行，再確認持久化模型設定；不自動核准供應商／帳號切換的額外確認。停止後冷啟動與暖機後的 Omnigent 更新 API 均已成功切換至 Luna，原生設定亦一致；目前 Omnigent UI 的 Hermes「Configure session」按鈕停用，使用者仍需從插件設定頁選模型並開啟已驗證對話。
 
-尚待完成：最新公開更新安裝及長時間測試。模型來源缺失的部署需要其管理者完成既有 provider 設定，不能以其他部署的金鑰代填。
+公開 main 的 127 項 Python 回歸已在 GitHub CI 的 3.12／3.13／3.14 通過；另有 5 項 Node 測試。最新公開來源更新安裝仍在驗收，長時間與多人模型負載未驗收。
+
+Luna 已通過一般回覆、terminal 及模型切換。該模型曾用包含多個詞的 `tool_search` 找不到 MCP 工具；MCP 握手、原生註冊與 Sol 指定工具的實際呼叫均正常。需要此工具時可使用 `tool_describe` 指定 `mcp__omnigent__sys_session_get_info`，再以 `tool_call` 呼叫；不把模型自主搜尋失敗視為工具呼叫通過。模型來源缺失的部署需要其管理者完成既有 provider 設定，不能以其他部署的金鑰代填。
 
 ## 實機結果（2026-10-12 歷史紀錄）
 
