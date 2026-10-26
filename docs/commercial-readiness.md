@@ -4,7 +4,14 @@
 
 指定主站 Hermes 0.22.5／Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
 
-## 2026-10-26 隔離瀏覽器補測
+## 2026-10-26 登入後 UI 與 Gateway 實測
+
+- 使用有效部署帳號完成 Hermes Web 登入，從 Plugins 清單點入「Omnigent 設定」並開啟 `/omnigent`。已登入後頁面顯示配對與 host 連線成功、Hermes 已安裝並驗證；狀態 API 回 HTTP 200、`phase=ready`、`loginConfirmed=true`。瀏覽器 JavaScript error 為 0。
+- 在設定頁按「取得可用模型」取得 HTTP 200；Hermes 清單有 13 個模型，engine 與 model 選擇器均實際呈現。首次狀態輪詢偶爾短暫停在「正在讀取狀態」並停用按鈕，輪詢完成後恢復；這是可見的載入延遲，仍應在正式使用時觀察。
+- Gateway 實測使用既有允許連線的 `paas-ws-782fd73d` Hermes Pod。認證後模型目錄回 HTTP 200、列出 29 個模型；建立只限單一模型、單次速率限制與低額度的一小時臨時金鑰，送出且只送出一次 Chat Completions，回 HTTP 200，隨即撤銷金鑰（刪除 API 回 HTTP 200）。金鑰與密碼未寫入紀錄或輸出。
+- 該模型路由回覆標示為 `fakegpt` 測試後端。因此此項證明 Gateway 認證、受限金鑰生命週期與 API 請求路徑可用，不代表真實供應商已完成推論驗收。指定目標 namespace `paas-ws-052c6889` 的 Hermes Pod 無法連到 Gateway；未修改該站網路政策，也未把較寬的網路權限加入目標站。
+
+## 2026-10-26 隔離瀏覽器補測（較早紀錄；登入後 live 點測見上）
 
 - 建立只存在 `/tmp` 的 Playwright 1.64.1／Chromium 環境，正式 Hermes 網站導向 `/login` 並以 HTTP 200 顯示登入表單；載入時 JavaScript error 為 0。沒有有效登入，因此認證後的正式 Plugins 清單與 Omnigent 分頁仍未做站上點擊驗收；沒有再猜密碼或重設帳戶。
 - 將正式 `dashboard/dist/index.js` 與 CSS 載入隔離 Chromium，使用 mock Hermes SDK/API 走過狀態載入、模型目錄、選擇 `gpt-5.6-sol`、提交模型驗證及產生已驗證對話連結；配對重開、遮罩密碼、模擬認證失敗後清空密碼欄、直接執行預設未勾選且只在明確勾選後送出。320／360／1440px 均無橫向溢出，browser storage 為空，JavaScript error 為 0。這是前端互動驗收，不等同正式 Hermes 認證後頁面的 E2E。
@@ -146,6 +153,7 @@ Luna 已通過一般回覆、terminal 及模型切換。該模型曾用包含多
 
 - 支援Bubblewrap的環境、Linux arm64及Hermes Desktop。
 - 目前不存在於測試容器的Claude Code、Codex、Pi，以及其他供應商。
+- Gateway 真實供應商推論：本次唯一一次直接推論命中 `fakegpt` 測試後端；指定目標 namespace `paas-ws-052c6889` 至 Gateway 的網路連線也尚未打通。
 - 所有 14 個模型的工具／圖片能力、額外 skills、多人模型併發與長時間負載；Omnigent MCP 與原生 terminal 已完成實際工具呼叫。
 - 非本次指定容器映像的升級／回退；本次固定映像的跨節點 Pod 重建及對話恢復已驗證。
 
