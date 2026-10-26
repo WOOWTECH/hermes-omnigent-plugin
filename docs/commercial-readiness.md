@@ -1,8 +1,12 @@
 # Hermes Omnigent 候選版驗收紀錄
 
-版本：v0.1.0-rc.12 候選版。驗收更新：2026-10-26 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
+版本：v0.1.0-rc.13 候選版。驗收更新：2026-10-26 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
 
 指定主站 Hermes 0.22.5／Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
+
+## rc.13 發布範圍
+
+rc.13 把公開 main 已修正的 Python 套件與 Dashboard 版本資訊、登入後 UI 與 Gateway 實測紀錄固定到同一版本標籤。安裝與更新仍從公開 Git repo 進行。主站真實對話已通過；第二站本機模型完整對話與真實供應商的 Gateway 直接推論仍未驗收。
 
 ## 2026-10-26 登入後 UI 與 Gateway 實測
 
