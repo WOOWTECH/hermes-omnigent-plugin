@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import types
 import unittest
 from unittest.mock import patch
@@ -10,6 +11,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PluginTests(unittest.TestCase):
+    def test_release_version_matches_all_plugin_manifests(self):
+        spec = importlib.util.spec_from_file_location(
+            'hermes_version_test', ROOT / 'hermes_omnigent' / '__init__.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        plugin_yaml = (ROOT / 'plugin.yaml').read_text()
+        plugin_version = re.search(r'^version:\s*"([^"]+)"$', plugin_yaml, re.MULTILINE).group(1)
+        dashboard_version = json.loads((ROOT / 'dashboard' / 'manifest.json').read_text())['version']
+        self.assertEqual(module.__version__, plugin_version)
+        self.assertEqual(dashboard_version, plugin_version)
+
     def test_credential_fields_never_appear_in_model_tools(self):
         spec = importlib.util.spec_from_file_location('hermes_entry_test', ROOT / '__init__.py')
         module = importlib.util.module_from_spec(spec)

@@ -4,12 +4,20 @@
 
 指定主站 Hermes 0.22.5／Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
 
+## 2026-10-26 隔離瀏覽器補測
+
+- 建立只存在 `/tmp` 的 Playwright 1.64.1／Chromium 環境，正式 Hermes 網站導向 `/login` 並以 HTTP 200 顯示登入表單；載入時 JavaScript error 為 0。沒有有效登入，因此認證後的正式 Plugins 清單與 Omnigent 分頁仍未做站上點擊驗收；沒有再猜密碼或重設帳戶。
+- 將正式 `dashboard/dist/index.js` 與 CSS 載入隔離 Chromium，使用 mock Hermes SDK/API 走過狀態載入、模型目錄、選擇 `gpt-5.6-sol`、提交模型驗證及產生已驗證對話連結；配對重開、遮罩密碼、模擬認證失敗後清空密碼欄、直接執行預設未勾選且只在明確勾選後送出。320／360／1440px 均無橫向溢出，browser storage 為空，JavaScript error 為 0。這是前端互動驗收，不等同正式 Hermes 認證後頁面的 E2E。
+- 以隔離 Python 3.12 venv 安裝 Omnigent 0.16.0／FastAPI／httpx，146 項 Python 測試全通過；6 項 Node Dashboard 契約測試及 `node --check` 通過。Python 3.11 的臨時環境無法安裝 Omnigent 0.16.0（套件要求 Python >=3.12）；插件安裝器在低於 3.12 時會以私有 uv 明確選用 Python 3.12。
+- 驗收時發現 `plugin.yaml` 已是 rc.12，而 Python package 與 Dashboard manifest 仍標為 rc.10。已同步到 rc.12，並新增 Node 契約檢查，避免下次發佈出現版本辨識不一致。
+- 從 Hermes Pod 無授權 GET LiteLLM `/health` 與 `/v1/models` 均回 HTTP 401；TCP／HTTP 可達、API 要求授權。沒有可用的專用推論金鑰，因此未送直接推論 API 請求。三個 Omnigent 模型的 Hermes 對話驗證仍是已完成的正式路徑，不能用來宣稱 Gateway 推論 API 已通過。
+
 ## 2026-10-26 後續驗收
 
 - 使用者明確授權後，在 `paas-ws-782fd73d` 與 `dev-sandbox-chatgpt` 建立兩條 NetworkPolicy：只允許指定 Hermes Pod 對指定 LiteLLM Pod 的 TCP 4000 egress 與 ingress。兩條規則均通過 server-side dry-run，套用後 selectors 與 port 已核對。
 - 從 Hermes Pod 到 LiteLLM Service 的 TCP 4000 實測連通。未附 API 認證的 `/health` 回覆 HTTP 401；本次只驗證網路傳輸，沒有讀取或建立 Gateway API key，也沒有送出 Gateway 推論請求。
 - 套用規則前後，以目前 adapter 程式碼和測試站既有 Omnigent 登入狀態各做一次真實 Hermes 對話；兩次皆由 `gpt-5.6-sol` 回覆 `OMNIGENT_CONNECTION_OK`，session 清理皆為 `stopped`。這驗證插件到 Omnigent 的對話路徑；不代表未認證的 LiteLLM 推論 API 已驗收。
-- 目前測試站 Hermes 0.22.5／chart 0.4.0 的實際 Pod selectors 與政策相符。瀏覽器 renderer 仍未連接，因此本次沒有目視點擊驗收設定頁；Plugin Doctor、頁面契約測試與先前設定頁驗收紀錄維持原狀。
+- 目前測試站 Hermes 0.22.5／chart 0.4.0 的實際 Pod selectors 與政策相符。Omnigent 內嵌瀏覽器 renderer 仍未連接；已用隔離 Chromium 驗證實際 Dashboard bundle 與 mock SDK/API，但部署站認證後的設定頁仍待有效登入才可做 live click E2E。Plugin Doctor、頁面契約測試與先前設定頁驗收紀錄維持原狀。
 
 - 以 Hermes 服務 UID 10000 執行已安裝 rc.12 的 `acceptance --chat --engine hermes --model gpt-5.6-luna`，驗收 `ok=true`、phase `ready`，收到 `OMNIGENT_CONNECTION_OK` 且測試 session 為 `stopped`。隨後由同一服務帳號讀取 runtime status，確認登入已核准、host 在線、Hermes ready，Claude Code／Codex／Pi 未安裝且未被誤報為可用。
 

@@ -21,7 +21,10 @@ test('declares an Omnigent settings page that Hermes can open from Plugins', () 
   assert.equal(manifest.label, 'Omnigent 設定');
   assert.equal(manifest.tab.path, '/omnigent');
   assert.equal(manifest.tab.position, 'after:plugins');
-  assert.equal(manifest.version, '0.1.0-rc.10');
+  const pluginVersion = fs.readFileSync(new URL('../plugin.yaml', import.meta.url), 'utf8')
+    .match(/^version:\s*"([^"]+)"$/m)?.[1];
+  assert.equal(manifest.version, '0.1.0-rc.12');
+  assert.equal(manifest.version, pluginVersion);
   assert.match(source, /h\('h1', null, 'Omnigent 設定'\)/);
 });
 
