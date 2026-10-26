@@ -1,8 +1,15 @@
 # Hermes Omnigent 候選版驗收紀錄
 
-版本：v0.1.0-rc.12 候選版。驗收更新：2026-10-25 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
+版本：v0.1.0-rc.12 候選版。驗收更新：2026-10-26 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
 
 指定主站 Hermes 0.22.5／Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
+
+## 2026-10-26 後續驗收
+
+- 使用者明確授權後，在 `paas-ws-782fd73d` 與 `dev-sandbox-chatgpt` 建立兩條 NetworkPolicy：只允許指定 Hermes Pod 對指定 LiteLLM Pod 的 TCP 4000 egress 與 ingress。兩條規則均通過 server-side dry-run，套用後 selectors 與 port 已核對。
+- 從 Hermes Pod 到 LiteLLM Service 的 TCP 4000 實測連通。未附 API 認證的 `/health` 回覆 HTTP 401；本次只驗證網路傳輸，沒有讀取或建立 Gateway API key，也沒有送出 Gateway 推論請求。
+- 套用規則前後，以目前 adapter 程式碼和測試站既有 Omnigent 登入狀態各做一次真實 Hermes 對話；兩次皆由 `gpt-5.6-sol` 回覆 `OMNIGENT_CONNECTION_OK`，session 清理皆為 `stopped`。這驗證插件到 Omnigent 的對話路徑；不代表未認證的 LiteLLM 推論 API 已驗收。
+- 目前測試站 Hermes 0.22.5／chart 0.4.0 的實際 Pod selectors 與政策相符。瀏覽器 renderer 仍未連接，因此本次沒有目視點擊驗收設定頁；Plugin Doctor、頁面契約測試與先前設定頁驗收紀錄維持原狀。
 
 ## rc.12 追加驗收
 
@@ -12,8 +19,7 @@
 - 已由 Hermes Plugin Manager 從公開 repo 更新安裝 rc.12，插件保持 enabled；Plugin Doctor 的 runtime discovery、manifest、import、registration 全通過，遠端版本檢查與安裝 commit 一致。以服務 UID 執行安裝後插件的 status／catalog 均成功，Hermes host 與 14 個模型項目可列出；`gpt-5.6-sol` 真實對話回覆 `OMNIGENT_CONNECTION_OK`、session `stopped`，插件狀態轉為 `ready`。本環境沒有可用的瀏覽器 renderer，故未重做可視頁面點擊驗收。
 - 測試容器 `hermes config get approvals.mode` 回報 `smart`，即低風險命令自動通過、危險或不確定命令仍要求確認；未將 profile 改成 `off`／YOLO。
 - 第二站目前讀取到的有效 Hermes 設定為 `openai-codex`／`gpt-6.1-sol`，沒有自訂 provider。這次沒有改寫該 profile 或其登入資料；安裝修正後仍須在第二站重跑插件驗證。
-- 指定 LiteLLM Gateway 的 live `/model/info` 顯示 19 個 Sol／Luna 模型 ID，專用 alias 查無既有金鑰。Hermes pod 對外域名回傳 403；對內部 Service 的 TCP 4000 連線遭拒。兩側 NetworkPolicy 目前分別未允許第二站 Hermes 到 Gateway 的流量。
-- 兩條只允許 Hermes 與內部 LiteLLM 之間 TCP 4000 的 NetworkPolicy 已通過 server-side dry run；套用被自動審核拒絕，因為「都同意」未被判定為對這項跨 namespace 持續變更的明確授權。規則尚未套用，也沒有建立推論金鑰或修改 Gateway／Hermes provider；已送出逐條說明的確認提示。
+- 2026-10-25 初次檢查時，Hermes 對 Gateway 的 TCP 4000 不通，兩側 NetworkPolicy 尚未允許該流量；先前的套用申請因授權文字不夠具體而遭自動審核拒絕。2026-10-26 使用者明確授權後的規則與連線結果，見上方後續驗收。當時沒有建立推論金鑰或修改 Gateway／Hermes provider。
 - Omnigent 0.16.0 下 Python 3.12、3.13、3.14 各 145 項測試全數通過；6 項 Node 測試與 Dashboard 語法檢查亦通過。
 
 ## rc.10 追加驗收
