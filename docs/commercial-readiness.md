@@ -11,6 +11,8 @@
 - 套用規則前後，以目前 adapter 程式碼和測試站既有 Omnigent 登入狀態各做一次真實 Hermes 對話；兩次皆由 `gpt-5.6-sol` 回覆 `OMNIGENT_CONNECTION_OK`，session 清理皆為 `stopped`。這驗證插件到 Omnigent 的對話路徑；不代表未認證的 LiteLLM 推論 API 已驗收。
 - 目前測試站 Hermes 0.22.5／chart 0.4.0 的實際 Pod selectors 與政策相符。瀏覽器 renderer 仍未連接，因此本次沒有目視點擊驗收設定頁；Plugin Doctor、頁面契約測試與先前設定頁驗收紀錄維持原狀。
 
+- 以 Hermes 服務 UID 10000 執行已安裝 rc.12 的 `acceptance --chat --engine hermes --model gpt-5.6-luna`，驗收 `ok=true`、phase `ready`，收到 `OMNIGENT_CONNECTION_OK` 且測試 session 為 `stopped`。隨後由同一服務帳號讀取 runtime status，確認登入已核准、host 在線、Hermes ready，Claude Code／Codex／Pi 未安裝且未被誤報為可用。
+
 ## rc.12 追加驗收
 
 - 第二站的 Hermes 原生目錄回傳 host 在線、Hermes engine ready，以及 13 個實際模型選項；Claude Code、Codex、Pi 在該容器均未安裝，插件正確回報缺少，不影響已安裝的 Hermes。
