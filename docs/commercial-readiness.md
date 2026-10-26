@@ -13,6 +13,8 @@
 
 - 以 Hermes 服務 UID 10000 執行已安裝 rc.12 的 `acceptance --chat --engine hermes --model gpt-5.6-luna`，驗收 `ok=true`、phase `ready`，收到 `OMNIGENT_CONNECTION_OK` 且測試 session 為 `stopped`。隨後由同一服務帳號讀取 runtime status，確認登入已核准、host 在線、Hermes ready，Claude Code／Codex／Pi 未安裝且未被誤報為可用。
 
+- 再以同一已安裝插件與 Hermes 服務 UID 10000 驗收 `gpt-6.1-sol`：`acceptance --chat` 回報 `ok=true`、phase `ready`，真實對話收到 `OMNIGENT_CONNECTION_OK` 並清理為 `stopped`。後續 runtime status 仍為 ready，最新驗證模型為 `gpt-6.1-sol`。
+
 ## rc.12 追加驗收
 
 - 第二站的 Hermes 原生目錄回傳 host 在線、Hermes engine ready，以及 13 個實際模型選項；Claude Code、Codex、Pi 在該容器均未安裝，插件正確回報缺少，不影響已安裝的 Hermes。

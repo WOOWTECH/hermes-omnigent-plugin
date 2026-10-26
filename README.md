@@ -2,7 +2,7 @@
 
 讓 Hermes 透過自己的 Plugins 頁安裝 Omnigent 連線插件，啟用後開啟配對面板。每次新安裝／重新啟用都重新要求 HTTPS Server、帳號與遮罩密碼；當下存在的 Hermes／Claude Code／Codex／Pi 都必須收到實際回覆，才標記 ready。不補裝缺少的引擎。
 
-目前為 **v0.1.0-rc.12 候選版**，已從公開 repo 更新安裝到 Hermes 0.22.5 測試站並保持啟用。Omnigent host 與 `gpt-5.6-sol`、`gpt-5.6-luna` 真實對話驗證通過且 session 均已停止；Hermes Pod 至內部 LiteLLM TCP 4000 已連通。瀏覽器 renderer 本次不可用，未直接驗收 Gateway 推論 API；詳見 [驗收紀錄](docs/commercial-readiness.md)。
+目前為 **v0.1.0-rc.12 候選版**，已從公開 repo 更新安裝到 Hermes 0.22.5 測試站並保持啟用。Omnigent host 與 `gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-6.1-sol` 真實對話驗證通過且 session 均已停止；Hermes Pod 至內部 LiteLLM TCP 4000 已連通。瀏覽器 renderer 本次不可用，未直接驗收 Gateway 推論 API；詳見 [驗收紀錄](docs/commercial-readiness.md)。
 
 ## 從 Hermes Web 安裝
 
