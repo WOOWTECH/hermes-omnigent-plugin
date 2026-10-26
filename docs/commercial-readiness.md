@@ -10,6 +10,7 @@
 - 將正式 `dashboard/dist/index.js` 與 CSS 載入隔離 Chromium，使用 mock Hermes SDK/API 走過狀態載入、模型目錄、選擇 `gpt-5.6-sol`、提交模型驗證及產生已驗證對話連結；配對重開、遮罩密碼、模擬認證失敗後清空密碼欄、直接執行預設未勾選且只在明確勾選後送出。320／360／1440px 均無橫向溢出，browser storage 為空，JavaScript error 為 0。這是前端互動驗收，不等同正式 Hermes 認證後頁面的 E2E。
 - 以隔離 Python 3.12 venv 安裝 Omnigent 0.16.0／FastAPI／httpx，146 項 Python 測試全通過；6 項 Node Dashboard 契約測試及 `node --check` 通過。Python 3.11 的臨時環境無法安裝 Omnigent 0.16.0（套件要求 Python >=3.12）；插件安裝器在低於 3.12 時會以私有 uv 明確選用 Python 3.12。
 - 驗收時發現 `plugin.yaml` 已是 rc.12，而 Python package 與 Dashboard manifest 仍標為 rc.10。已同步到 rc.12，並新增 Node 契約檢查，避免下次發佈出現版本辨識不一致。
+- Hermes 測試站原有的公開插件 checkout 工作樹乾淨；以 Hermes 服務帳號 fast-forward 從 `4b90f09` 更新到公開 `main` 的 `2b72426`，再確認插件清單、Python package 與 Dashboard manifest 都為 rc.12、checkout 乾淨。這完成測試站的來源更新；認證後頁面的 live 瀏覽器操作仍待有效登入。
 - 從 Hermes Pod 無授權 GET LiteLLM `/health` 與 `/v1/models` 均回 HTTP 401；TCP／HTTP 可達、API 要求授權。沒有可用的專用推論金鑰，因此未送直接推論 API 請求。三個 Omnigent 模型的 Hermes 對話驗證仍是已完成的正式路徑，不能用來宣稱 Gateway 推論 API 已通過。
 
 ## 2026-10-26 後續驗收
