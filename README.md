@@ -82,4 +82,10 @@ node --test tests/*.test.mjs
 node --check dashboard/dist/index.js
 ```
 
+### 相容性監看
+
+- `tests/server-contract/run.py` 在本機啟動真正的 Omnigent server（只聽 loopback、不接模型或外部服務），用插件自己的 adapter 走完連結、主機上線、重連、重啟、取消連結。CI 的 `server-contract` 工作對 server 0.16.0 與 0.19.1 各跑一次；本機執行：`python tests/server-contract/run.py --expect-sdk-version 0.16.0`，`--server-omnigent PATH` 可改測另一個版本的 server。
+- 每週一的 `omnigent-canary` 工作對固定版本及其後發行的新版重複上述檢查，並用 `.github/scripts/check-omnigent-compat.py` 檢查相容層錨點是否還能套用。結果集中在一則標籤為 `omnigent-compat` 的 issue，只有結果改變或出現新版時才留言。錨點不符不影響固定在 0.16.0 的插件，只表示升級 SDK 前要先改相容層。
+- GitHub 會在公開 repo 連續 60 天沒有活動時停用排程工作；issue 內的「Last run」日期可用來確認它還在跑。
+
 Omnigent adapter 以 MIT 授權重用 [Pi Omnigent Plugin](https://github.com/WOOWTECH/pi-omnigent-plugin) v0.2.1，Hermes 配對及 Dashboard 為本專案功能。
