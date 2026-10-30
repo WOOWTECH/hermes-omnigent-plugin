@@ -2,6 +2,7 @@ import ast
 import asyncio
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -21,7 +22,7 @@ class CompatibilityTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.sdk = Path(self.temp.name)
         source = Path(omnigent.__file__).resolve().parent
-        for relative in ['host/connect.py', 'harnesses/hermes_native/bridge.py', 'harnesses/hermes_native/forwarder.py', 'runner/app.py', 'runner/native/orchestration.py', 'onboarding/harness_readiness.py']:
+        for relative in ['host/connect.py', 'harnesses/hermes_native/bridge.py', 'harnesses/hermes_native/forwarder.py', 'runner/app.py', 'runner/model_option_routes.py', 'runner/native/orchestration.py', 'onboarding/harness_readiness.py']:
             target = self.sdk / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / relative, target)
@@ -93,6 +94,54 @@ class CompatibilityTests(unittest.TestCase):
         reader = namespace['_connect_ro'](db)
         self.assertEqual(reader.execute('SELECT count(*) FROM messages').fetchone()[0], 0)
         reader.close()
+
+    def patched(self, relative):
+        return next(after for file, before, after in patches.make_edits(self.sdk) if str(file).endswith(relative))
+
+    def test_only_the_users_direct_run_consent_turns_the_terminal_sandbox_off(self):
+        """The patched Hermes terminal launch: sandbox none if and only if HERMES_OMNIGENT_DIRECT_HERMES is 1."""
+        from omnigent.inner.datamodel import OSEnvSandboxSpec
+        tree = ast.parse(self.patched('runner/native/orchestration.py'))
+        function = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == '_auto_create_hermes_terminal')
+        spec = next(n for n in ast.walk(function) if isinstance(n, ast.Call) and getattr(n.func, 'id', '') == 'OSEnvSpec')
+        keyword = next(k for k in spec.keywords if k.arg == 'sandbox')
+        expression = compile(ast.Expression(keyword.value), '<patched-sandbox>', 'eval')
+        inherited = types.SimpleNamespace(sandbox='the-agents-own-sandbox')
+
+        def sandbox(env, agent_os_env):
+            with patch.dict(os.environ, {k: v for k, v in env.items() if v is not None}, clear=False):
+                if env.get('HERMES_OMNIGENT_DIRECT_HERMES') is None:
+                    os.environ.pop('HERMES_OMNIGENT_DIRECT_HERMES', None)
+                return eval(expression, {'os': os, 'OSEnvSandboxSpec': OSEnvSandboxSpec, 'agent_os_env': agent_os_env})
+
+        for agent in (None, inherited):
+            consent = sandbox({'HERMES_OMNIGENT_DIRECT_HERMES': '1'}, agent)
+            self.assertIsInstance(consent, OSEnvSandboxSpec)
+            self.assertEqual(consent.type, 'none')
+        for env in ({'HERMES_OMNIGENT_DIRECT_HERMES': '0'}, {'HERMES_OMNIGENT_DIRECT_HERMES': ''}, {'HERMES_OMNIGENT_DIRECT_HERMES': 'true'}, {}):
+            self.assertIsNone(sandbox(env, None))
+            self.assertEqual(sandbox(env, inherited), 'the-agents-own-sandbox')
+
+    def test_the_session_model_route_lists_hermes_models_and_leaves_other_harnesses_alone(self):
+        tree = ast.parse(self.patched('runner/model_option_routes.py'))
+        function = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == 'get_session_model_options')
+        class App:  # the route decorators of the real FastAPI app; here they return the function unchanged
+            def __getattr__(self, name):
+                return lambda *args, **kwargs: (lambda function: function)
+
+        namespace = {'asyncio': asyncio, 'app': App(), 'JSONResponse': lambda content, status_code=200: ('json', status_code, content)}
+        harness = {'name': 'hermes-native'}
+        namespace['_session_harness_name'] = lambda session_id: harness['name']
+
+        async def claude(session_id):
+            return ('claude', session_id)
+
+        namespace['get_session_claude_model_options'] = claude
+        exec(compile(ast.Module(body=[function], type_ignores=[]), '<patched-model-route>', 'exec'), namespace)
+        with patch('hermes_omnigent.compat.hermes_models', return_value=[{'id': 'sol'}]):
+            self.assertEqual(asyncio.run(namespace['get_session_model_options']('s1')), ('json', 200, {'models': [{'id': 'sol'}]}))
+            harness['name'] = 'claude-native'
+            self.assertEqual(asyncio.run(namespace['get_session_model_options']('s2')), ('claude', 's2'))
 
     def test_unknown_upstream_shape_fails_before_changing_any_file(self):
         file = self.sdk / 'runner/app.py'

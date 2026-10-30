@@ -19,6 +19,10 @@ import uuid
 NAME = 'hermes-omnigent'
 ENGINES = ('hermes', 'claude', 'codex', 'pi')
 SENTINEL = 'OMNIGENT_CONNECTION_OK'
+# The Omnigent release this plugin installs for itself and patches (hermes_omnigent/patches.py). The compatibility installer,
+# the CI workflows and the weekly canary all read it from here; a plugin update that moves it makes the next activation
+# reinstall the private runtime (see Runtime.install).
+OMNIGENT_VERSION = '0.19.1'
 _cache = {}
 _cache_lock = threading.Lock()
 
@@ -401,9 +405,11 @@ class Runtime:
             deps = self.discover()
         self.check_sandbox(deps)
         binary = deps.get('omnigent', {}).get('path')
-        if deps.get('omnigent', {}).get('available') and binary and Path(binary).resolve().is_relative_to(self.root / 'uv/tools'):
+        private = bool(deps.get('omnigent', {}).get('available') and binary and Path(binary).resolve().is_relative_to(self.root / 'uv/tools'))
+        if private and deps['omnigent'].get('version') == OMNIGENT_VERSION:
             self.install_compatibility(binary)
             return deps
+        # Missing, or a private runtime of another release (a plugin update moved the pin): install the pinned release over it.
         env = self.environment()
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         uv = deps.get('uv', {}).get('path')
@@ -417,7 +423,7 @@ class Runtime:
         env.update(UV_TOOL_DIR=str(self.root / 'uv/tools'), UV_TOOL_BIN_DIR=str(self.root / 'bin'),
                    UV_CACHE_DIR=str(self.root / 'uv/cache'), UV_PYTHON_INSTALL_DIR=str(self.root / 'python'))
         python = sys.executable if sys.version_info >= (3, 12) else '3.12'
-        result = subprocess.run([uv, 'tool', 'install', '--python', python, 'omnigent==0.16.0'],
+        result = subprocess.run([uv, 'tool', 'install', '--python', python, *(['--reinstall'] if private else []), f'omnigent=={OMNIGENT_VERSION}'],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900, env=env)
         if result.returncode:
             raise Failure('OMNIGENT_INSTALL_FAILED')

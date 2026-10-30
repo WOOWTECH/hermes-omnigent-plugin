@@ -1,7 +1,7 @@
-"""Exact source transformations of Omnigent0.16 in the plugin-owned venv."""
+"""Exact source transformations of the pinned Omnigent release in the plugin-owned venv."""
 from pathlib import Path
 
-MARKER = '# hermes-omnigent-plugin compatibility v17'
+MARKER = '# hermes-omnigent-plugin compatibility v18'
 
 
 def make_edits(sdk, source_overrides=None):
@@ -136,13 +136,23 @@ def make_edits(sdk, source_overrides=None):
         from hermes_omnigent.compat import native_gateway
         await asyncio.to_thread(native_gateway, "prepare", _hermes_home_path)
 ''' + anchor)
-        anchor = '            os_env=OSEnvSpec(type="caller_process", cwd=workspace),\n'
+        anchor = ('            os_env=OSEnvSpec(\n'
+                  '                type="caller_process",\n'
+                  '                cwd=workspace,\n'
+                  '                sandbox=(agent_os_env.sandbox if agent_os_env is not None else None),\n'
+                  '            ),\n')
         if section.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
         section = section.replace('from omnigent.inner.datamodel import OSEnvSpec, TerminalEnvSpec',
             'from omnigent.inner.datamodel import OSEnvSpec, TerminalEnvSpec, OSEnvSandboxSpec')
-        section = section.replace(anchor, '''            os_env=OSEnvSpec(type="caller_process", cwd=workspace,
-                sandbox=OSEnvSandboxSpec(type="none") if os.environ.get("HERMES_OMNIGENT_DIRECT_HERMES") == "1" else None),
+        # Only the user's explicit direct-run consent (the runtime sets this variable from the approved state) turns the
+        # sandbox off. Otherwise the terminal keeps what Omnigent decides: the agent's own sandbox, else the platform default.
+        section = section.replace(anchor, '''            os_env=OSEnvSpec(
+                type="caller_process",
+                cwd=workspace,
+                sandbox=(OSEnvSandboxSpec(type="none") if os.environ.get("HERMES_OMNIGENT_DIRECT_HERMES") == "1"
+                         else (agent_os_env.sandbox if agent_os_env is not None else None)),
+            ),
 ''')
         return source[:start] + section + source[end:]
 
@@ -157,6 +167,9 @@ def make_edits(sdk, source_overrides=None):
                     return JSONResponse({"error": "invalid_model"}, status_code=400)
                 return await change_model(conversation_id, model)
 ''')
+        return source
+
+    def model_routes(source):
         anchor = '        harness = _session_harness_name(session_id)\n        if harness == "claude-native":\n            return await get_session_claude_model_options(session_id)\n'
         if source.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
@@ -183,5 +196,6 @@ def make_edits(sdk, source_overrides=None):
     change('harnesses/hermes_native/forwarder.py', forwarder)
     change('runner/native/orchestration.py', orchestration)
     change('runner/app.py', runner)
+    change('runner/model_option_routes.py', model_routes)
     change('onboarding/harness_readiness.py', readiness)
     return edits

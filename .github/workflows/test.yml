@@ -16,7 +16,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.19.0'
-      - run: python -m pip install omnigent==0.16.0
+      - name: Install the pinned Omnigent
+        run: |
+          SDK_VERSION="$(python .github/scripts/omnigent-canary.py pin)"
+          python -m pip install "omnigent==$SDK_VERSION"
       - run: python -m unittest discover -s tests -p 'test_*.py'
       - run: node --test tests/*.test.mjs
       - run: node --check dashboard/dist/index.js
@@ -25,7 +28,8 @@ jobs:
     # The adapter (hermes_omnigent/adapter.py) against a real local Omnigent server instead of fakes: connect, host online,
     # status and catalog, reconnect (while the host runs, and after it died), restart_host, disconnect, connect again. No model,
     # engine or external service; run.py scrubs the environment and fails the run on any egress. The adapter and the managed
-    # host keep the pinned SDK; the second server is the release the PaaS runs today (omnigent-canary.yml covers newer ones).
+    # host keep the pinned SDK. One server is an older release (does the pinned SDK still work against it?), the other is the
+    # release the PaaS runs today; omnigent-canary.yml covers the releases after the pin.
     name: server-contract (server ${{ matrix.server }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -40,9 +44,13 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
-      - run: python -m pip install omnigent==0.16.0
-      - name: Separate installation for a newer server
-        if: matrix.server != '0.16.0'
+      - name: Install the pinned Omnigent
+        run: |
+          SDK_VERSION="$(python .github/scripts/omnigent-canary.py pin)"
+          echo "SDK_VERSION=$SDK_VERSION" >> "$GITHUB_ENV"
+          python -m pip install "omnigent==$SDK_VERSION"
+      - name: Separate installation for a server of another release
+        if: matrix.server != env.SDK_VERSION
         env:
           SERVER_VERSION: ${{ matrix.server }}
         run: |
@@ -53,7 +61,7 @@ jobs:
         env:
           SERVER_VERSION: ${{ matrix.server }}
         run: |
-          args=(--expect-sdk-version 0.16.0 --expect-server-version "$SERVER_VERSION" --logs "$RUNNER_TEMP/contract-logs")
+          args=(--expect-sdk-version "$SDK_VERSION" --expect-server-version "$SERVER_VERSION" --logs "$RUNNER_TEMP/contract-logs")
           if [[ -n "${SERVER_OMNIGENT:-}" ]]; then args+=(--server-omnigent "$SERVER_OMNIGENT"); fi
           python tests/server-contract/run.py "${args[@]}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

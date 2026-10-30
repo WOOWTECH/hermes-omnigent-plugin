@@ -6,7 +6,7 @@ text anchors, and a single miss stops the install with OMNIGENT_COMPAT_ANCHOR_MI
 any release, without installing it and without touching it:
 
     python .github/scripts/check-omnigent-compat.py --wheel omnigent-0.20.0-py3-none-any.whl
-    python .github/scripts/check-omnigent-compat.py --sdk-dir .../site-packages/omnigent --label 0.16.0
+    python .github/scripts/check-omnigent-compat.py --sdk-dir .../site-packages/omnigent --label 0.19.1
 
 In this order: every anchor matches (make_edits), every patched file compiles, and patching the result again changes
 nothing. The Omnigent SDK itself is not needed to run this; the plugin's patch code imports without it.
