@@ -641,9 +641,12 @@ class Runtime:
                 compatibility = read(self.root / 'compatibility.json')
                 state = self.state()
                 approved = self.approved(state) and bool(state.get('server'))
-                if not deps.get('omnigent', {}).get('available') or not deps.get('tmux', {}).get('available') or compatibility.get('generation') != MARKER:
+                if (not deps.get('omnigent', {}).get('available') or not deps.get('tmux', {}).get('available')
+                        or compatibility.get('generation') != MARKER or compatibility.get('version') != OMNIGENT_VERSION):
                     # An authenticated upgrade must also refresh its resident
-                    # host after installing the new SDK generation.
+                    # host after installing the new SDK generation. A release that moves
+                    # the Omnigent pin without touching the patches keeps the generation,
+                    # so the runtime's own release is compared as well.
                     self.start('restore' if approved else 'prepare')
                 elif approved and (read(self.root / 'host-runtime.json') != self.host_generation()
                                    or not self.status().get('host', {}).get('connected')):

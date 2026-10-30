@@ -51,6 +51,19 @@ class RuntimeTests(unittest.TestCase):
             self.runtime.activate(prepare=True)
             start.assert_called_once_with('restore')
 
+    def test_a_moved_omnigent_pin_restores_even_when_the_patch_generation_is_unchanged(self):
+        from hermes_omnigent.patches import MARKER
+        from hermes_omnigent.runtime import OMNIGENT_VERSION
+        self.runtime.lifecycle()
+        self.pair()
+        self.runtime._watcher = True
+        for installed, expect_restore in ((OMNIGENT_VERSION, False), ('0.0.1', True), (None, True)):
+            with self.subTest(runtime_release=installed):
+                write(self.runtime.root / 'compatibility.json', {'generation': MARKER, **({'version': installed} if installed else {})})
+                with patch.object(self.runtime, 'start') as start:
+                    self.runtime.activate(prepare=True)
+                    self.assertEqual(start.call_args_list, [unittest.mock.call('restore')] if expect_restore else [])
+
     def test_unpaired_upgrade_prepares_without_restoring_old_auth(self):
         self.runtime._watcher = True
         with patch.object(self.runtime, 'start') as start:
