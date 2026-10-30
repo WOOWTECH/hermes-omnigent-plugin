@@ -11,7 +11,7 @@ rc.14 把插件私有的 Omnigent 由 0.16.0 升到 0.19.1，與 PaaS 的三台 
 - `runner/native/orchestration.py`：Omnigent 0.19 會讓 Hermes 終端機繼承 agent 的沙盒，並把 `os_env` 拆成多行。插件重新推導了同一個覆寫：只有使用者的「允許 Hermes 直接執行」同意（`HERMES_OMNIGENT_DIRECT_HERMES=1`）會把沙盒關掉；否則沿用 Omnigent 的決定（agent 自己的沙盒，沒有就是平台預設）。單元測試直接求值修補後的運算式，並以兩個刻意破壞（沙盒永遠關、同意被忽略）驗證會失敗。
 - 模型選項路由在 0.17 起從 `runner/app.py` 搬到 `runner/model_option_routes.py`，Hermes 分支改在新檔補上；`model_change` 處理仍在 `app.py`。修補的檔案由 6 個變 7 個。
 - 就地升級：私有 runtime 的 Omnigent 版本不等於固定版本時，`uv tool install --reinstall` 重裝，舊版的收據與原檔改名為 `compat-originals.<版本>` 保存；`activate()` 除了世代不符，現在也在 runtime 版本不符時走既有的 `restore`（重建 runtime、重新載入自己管理的 host、保留登入）。
-- 不含：Omnigent 0.20.0（其修補後的 `orchestration.py` 目前無法編譯，仍需另外處理，由每週 canary 追蹤）。
+- 不含：Omnigent 0.20.0。相容層對 0.20.0 的錨點全部吻合、修補後的檔案可編譯、重複修補不變（每週 canary 以 Python 3.12 檢查），0.19.1 的 SDK 對 0.20.0 伺服器的契約測試也是 11/11；但 0.20.0 的 SDK 與主機端沒有在真實租戶上跑過對話，所以固定版本維持與 PaaS 伺服器同版的 0.19.1。
 
 ## 2026-10-30 Omnigent 0.19.1 升級驗收
 
@@ -21,7 +21,7 @@ rc.14 把插件私有的 Omnigent 由 0.16.0 升到 0.19.1，與 PaaS 的三台 
 - PaaS 測試服務 svc-f6dc6ec5（已與 PaaS 的 Omnigent 0.19.1 伺服器配對）：外掛目錄由 rc.13 fast-forward 到本版程式，Dashboard 重啟一次；45 秒內外掛自己完成 restore（Omnigent 0.16.0 → 0.19.1、v17 → v18、7 檔、managed host 重新載入），狀態維持 `ready`，登入、直接執行同意與驗證回條都保留，私有 runtime 佔用增加約 0.4 GB。
 - 同一服務的真實 Hermes 對話：`acceptance --chat` 與指定模型 `gpt-6.1-sol` 的 `verify`，回覆皆為 `OMNIGENT_CONNECTION_OK`，cleanup 為 `stopped`；主機提供的 catalog 列出 15 個 Hermes 模型。該服務使用直接執行同意，所以這些對話走的是新的 `sandbox=none` 運算式。
 - 期間服務的 Pod 被一次無關的重新部署重建；外掛自己恢復 host，約兩分鐘後回到 `ready`。
-- 未涵蓋：非直接執行的沙盒路徑（只有單元測試；該 Pod 無法建立命名空間）、升級前建立的舊對話續接、非 PaaS 的 Omnigent 伺服器、Omnigent 0.20.0。
+- 未涵蓋：非直接執行的沙盒路徑（只有單元測試；該 Pod 無法建立命名空間）、升級前建立的舊對話續接、非 PaaS 的 Omnigent 伺服器、以 Omnigent 0.20.0 的 SDK 實際跑對話。
 
 ## rc.13 發布範圍
 

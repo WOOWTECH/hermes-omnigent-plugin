@@ -12,7 +12,8 @@ In this order: every anchor matches (make_edits), every patched file compiles, a
 nothing. The Omnigent SDK itself is not needed to run this; the plugin's patch code imports without it.
 
 The last line on stdout is one JSON object: {"label", "ok", "code", "file", "line"}. Exit status: 0 the layer fits,
-1 it does not (code says how; file is the SDK file being patched; line is in patches.py), 2 a usage error.
+1 it does not (code says how; file is the SDK file being patched; line is in patches.py), 2 a usage error or
+Python older than 3.12 (Omnigent's own files use 3.12 syntax).
 """
 from __future__ import annotations
 
@@ -89,6 +90,11 @@ def main(argv=None):
     source.add_argument('--sdk-dir', help='an unpacked or installed omnigent package directory (the one holding host/, runner/, ...)')
     parser.add_argument('--label', help='name for the report (default: the version in the wheel file name)')
     args = parser.parse_args(argv)
+    if sys.version_info < (3, 12):
+        # Omnigent releases use Python 3.12 syntax (for example `def f[T](...)`). An older interpreter reports
+        # PATCHED_SOURCE_DOES_NOT_COMPILE for a release that compiles fine where it is meant to run.
+        print(f'Python {sys.version_info.major}.{sys.version_info.minor} cannot read every Omnigent release; run this with 3.12 or newer', file=sys.stderr)
+        return 2
     with tempfile.TemporaryDirectory() as scratch:
         label = args.label
         if args.wheel:
