@@ -32,6 +32,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # "server-contract (server X)" for each X below is a required check of main (branch protection). Changing this list
+        # means changing the protection too, or every pull request waits for a check that never runs.
         server: ['0.16.0', '0.19.1']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
