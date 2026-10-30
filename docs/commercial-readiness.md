@@ -1,8 +1,27 @@
 # Hermes Omnigent 候選版驗收紀錄
 
-版本：v0.1.0-rc.13 候選版。驗收更新：2026-10-26 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
+版本：v0.1.0-rc.14 候選版。驗收更新：2026-10-30 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
 
 指定主站 Hermes 0.22.5／Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
+
+## rc.14 發布範圍
+
+rc.14 把插件私有的 Omnigent 由 0.16.0 升到 0.19.1，與 PaaS 的三台 Omnigent 伺服器同版；固定值只寫在 `runtime.OMNIGENT_VERSION` 一處，安裝器、相容層、CI 與每週 canary 都讀它，並有測試防止只改一半。相容層世代 v17 → v18：
+
+- `runner/native/orchestration.py`：Omnigent 0.19 會讓 Hermes 終端機繼承 agent 的沙盒，並把 `os_env` 拆成多行。插件重新推導了同一個覆寫：只有使用者的「允許 Hermes 直接執行」同意（`HERMES_OMNIGENT_DIRECT_HERMES=1`）會把沙盒關掉；否則沿用 Omnigent 的決定（agent 自己的沙盒，沒有就是平台預設）。單元測試直接求值修補後的運算式，並以兩個刻意破壞（沙盒永遠關、同意被忽略）驗證會失敗。
+- 模型選項路由在 0.17 起從 `runner/app.py` 搬到 `runner/model_option_routes.py`，Hermes 分支改在新檔補上；`model_change` 處理仍在 `app.py`。修補的檔案由 6 個變 7 個。
+- 就地升級：私有 runtime 的 Omnigent 版本不等於固定版本時，`uv tool install --reinstall` 重裝，舊版的收據與原檔改名為 `compat-originals.<版本>` 保存；`activate()` 除了世代不符，現在也在 runtime 版本不符時走既有的 `restore`（重建 runtime、重新載入自己管理的 host、保留登入）。
+- 不含：Omnigent 0.20.0（其修補後的 `orchestration.py` 目前無法編譯，仍需另外處理，由每週 canary 追蹤）。
+
+## 2026-10-30 Omnigent 0.19.1 升級驗收
+
+- 單元測試：以真的 `omnigent==0.19.1` 安裝，Python 3.12／3.13／3.14 的 CI 皆通過（163 項）。對照：升級前以 0.19.1 原始碼跑舊的修補，11 項失敗，全部是兩個失配的錨點。
+- 對真伺服器的契約測試（本機啟動 Omnigent 伺服器，插件自己的 adapter 走完連線、主機上線、重連、重啟、取消連結，共 11 步）：0.19.1 的 SDK 對伺服器 0.16.0、0.17.0、0.18.0、0.19.1、0.20.0 各 11/11。CI 的 `server-contract` 對 0.16.0 與 0.19.1 為必要檢查。
+- 就地升級演練（真的 uv 與 PyPI，同一個插件目錄原地更新）：rc.13 的程式建立 0.16.0 與 v17 收據（6 檔）；新程式重裝 0.19.1、寫入 v18 收據（7 檔）、保留舊原檔；再跑一次不改任何東西；七個修補後的模組都能在私有直譯器匯入。
+- PaaS 測試服務 svc-f6dc6ec5（已與 PaaS 的 Omnigent 0.19.1 伺服器配對）：外掛目錄由 rc.13 fast-forward 到本版程式，Dashboard 重啟一次；45 秒內外掛自己完成 restore（Omnigent 0.16.0 → 0.19.1、v17 → v18、7 檔、managed host 重新載入），狀態維持 `ready`，登入、直接執行同意與驗證回條都保留，私有 runtime 佔用增加約 0.4 GB。
+- 同一服務的真實 Hermes 對話：`acceptance --chat` 與指定模型 `gpt-6.1-sol` 的 `verify`，回覆皆為 `OMNIGENT_CONNECTION_OK`，cleanup 為 `stopped`；主機提供的 catalog 列出 15 個 Hermes 模型。該服務使用直接執行同意，所以這些對話走的是新的 `sandbox=none` 運算式。
+- 期間服務的 Pod 被一次無關的重新部署重建；外掛自己恢復 host，約兩分鐘後回到 `ready`。
+- 未涵蓋：非直接執行的沙盒路徑（只有單元測試；該 Pod 無法建立命名空間）、升級前建立的舊對話續接、非 PaaS 的 Omnigent 伺服器、Omnigent 0.20.0。
 
 ## rc.13 發布範圍
 
