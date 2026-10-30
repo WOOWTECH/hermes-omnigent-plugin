@@ -1,0 +1,116 @@
+name: Publish release package
+
+# rc.9 and rc.10 shipped a source archive and a SHA256SUMS file; later releases went out without them. This workflow
+# attaches both to a release when it is published, or to an existing release on demand (workflow_dispatch).
+# The archive is exactly what `git archive` makes of the tag, so anyone can rebuild it and compare. An asset that is
+# already attached is never replaced, because people may already have checked its hash.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, such as v0.1.0-rc.13
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-package-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          persist-credentials: false
+
+      - name: Check the tag and the version it carries
+        run: |
+          set -euo pipefail
+          [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || { echo "::error::unexpected tag '${TAG}'"; exit 1; }
+          [ "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/${TAG}^{commit}")" ] || { echo "::error::the checked-out commit is not the commit of tag ${TAG}"; exit 1; }
+          want="${TAG#v}"
+          have="$(sed -n 's/^version: *"\{0,1\}\([^" ]*\)"\{0,1\} *$/\1/p' plugin.yaml | head -n1)"
+          [ "${have}" = "${want}" ] || { echo "::error::plugin.yaml says '${have}' but the tag says '${want}'"; exit 1; }
+          echo "tag ${TAG} is commit $(git rev-parse --short HEAD) and plugin.yaml says ${have}"
+
+      - name: Build the archive and its checksum
+        run: |
+          set -euo pipefail
+          name="hermes-omnigent-plugin-${TAG}"
+          git archive --format=tar --prefix="${name}/" HEAD | gzip -n -9 > "${name}.tar.gz"
+          sha256sum "${name}.tar.gz" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attach what is missing (never replaces an asset)
+        run: |
+          set -euo pipefail
+          name="hermes-omnigent-plugin-${TAG}.tar.gz"
+          existing="$(gh release view "${TAG}" --json assets --jq '.assets[].name')"
+          have_tgz=false; have_sums=false
+          grep -qxF "${name}" <<<"${existing}" && have_tgz=true
+          grep -qxF SHA256SUMS <<<"${existing}" && have_sums=true
+          if [ "${have_tgz}" = false ] && [ "${have_sums}" = true ]; then
+            echo "::error::SHA256SUMS is attached but the archive is not; refusing to guess which bytes it describes"; exit 1
+          fi
+          if [ "${have_tgz}" = false ]; then
+            gh release upload "${TAG}" "${name}" SHA256SUMS
+          elif [ "${have_sums}" = false ]; then
+            # the archive was attached by hand; describe those exact bytes, not the ones built above
+            gh release download "${TAG}" --pattern "${name}" --dir attached
+            (cd attached && sha256sum "${name}" > ../SHA256SUMS.attached)
+            gh release upload "${TAG}" SHA256SUMS.attached#SHA256SUMS
+          else
+            echo "::notice::the archive and SHA256SUMS are already attached; leaving both as they are"
+          fi
+
+      - name: Check the public download against its checksum and against the tag
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          name="hermes-omnigent-plugin-${TAG}.tar.gz"
+          curl -fsSL -o "${work}/pkg.tgz" "${base}/${name}"
+          curl -fsSL -o "${work}/SHA256SUMS" "${base}/SHA256SUMS"
+          want="$(awk '{print $1}' "${work}/SHA256SUMS")"
+          have="$(sha256sum "${work}/pkg.tgz" | awk '{print $1}')"
+          [ "${want}" = "${have}" ] || { echo "::error::the public archive does not match the public SHA256SUMS"; exit 1; }
+          git archive --format=tar --prefix="hermes-omnigent-plugin-${TAG}/" HEAD > "${work}/tag.tar"
+          python3 - "${work}/pkg.tgz" "${work}/tag.tar" <<'PY'
+          import hashlib, sys, tarfile
+
+          def tree(path):
+              out = {}
+              with tarfile.open(path) as t:
+                  for m in t.getmembers():
+                      if m.isfile():
+                          out[m.name] = hashlib.sha256(t.extractfile(m).read()).hexdigest()
+                      elif m.issym():
+                          out[m.name] = 'symlink:' + m.linkname
+              return out
+
+          published, tagged = tree(sys.argv[1]), tree(sys.argv[2])
+          only_pub = sorted(set(published) - set(tagged))
+          only_tag = sorted(set(tagged) - set(published))
+          differ = sorted(k for k in set(published) & set(tagged) if published[k] != tagged[k])
+          print(f'{len(published)} files in the published archive, {len(tagged)} in the tag')
+          if only_pub or only_tag or differ:
+              print('only in the archive:', only_pub[:10])
+              print('only in the tag:', only_tag[:10])
+              print('different content:', differ[:10])
+              sys.exit('::error::the published archive is not the content of the tag')
+          print('the published archive is the content of the tag')
+          PY
