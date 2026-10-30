@@ -1,4 +1,4 @@
-"""Hermes model/profile support for this plugin's private Omnigent 0.16."""
+"""Hermes model/profile support for this plugin's private Omnigent (the release pinned in runtime.OMNIGENT_VERSION)."""
 import asyncio
 import json
 import os
@@ -232,11 +232,11 @@ async def change_model(session_id, model):
 
 def install_private(root, plugin_root, python):
     """Patch only the managed SDK; exact anchors fail closed on other versions."""
-    from .runtime import Failure, write
+    from .runtime import Failure, OMNIGENT_VERSION, write
     import hashlib
     import importlib.metadata
     import shutil
-    if importlib.metadata.version('omnigent') != '0.16.0':
+    if importlib.metadata.version('omnigent') != OMNIGENT_VERSION:
         raise Failure('OMNIGENT_COMPAT_VERSION_UNSUPPORTED')
     import omnigent
     sdk = Path(omnigent.__file__).resolve().parent
@@ -247,6 +247,15 @@ def install_private(root, plugin_root, python):
     from .runtime import read
     previous = read(root / 'compatibility.json')
     backup = root / 'compat-originals'
+    if previous.get('version') != OMNIGENT_VERSION:
+        # The receipts and the saved originals describe another Omnigent release. The files now on disk are that release's
+        # replacement, so nothing may be compared with them; keep the old originals aside for the record.
+        label = re.sub(r'[^0-9A-Za-z._-]', '_', str(previous.get('version') or 'unknown'))
+        previous = {}
+        if backup.is_dir():
+            aside = root / f'compat-originals.{label}'
+            shutil.rmtree(aside, ignore_errors=True)
+            backup.rename(aside)
     originals = {}
     for row in previous.get('files', []):
         file = sdk / row['file']
@@ -277,7 +286,7 @@ def install_private(root, plugin_root, python):
     # site .pth files. No global site-packages or caller workspace is changed.
     site = sdk.parent
     (site / 'hermes_omnigent_plugin.pth').write_text('import sys; sys.path.insert(0, ' + repr(str(plugin_root)) + ')\n')
-    write(root / 'compatibility.json', {'version': '0.16.0', 'generation': patches.MARKER, 'privateOnly': True, 'files': receipts})
+    write(root / 'compatibility.json', {'version': OMNIGENT_VERSION, 'generation': patches.MARKER, 'privateOnly': True, 'files': receipts})
 
 
 if __name__ == '__main__':

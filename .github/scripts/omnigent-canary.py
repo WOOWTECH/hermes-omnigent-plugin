@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Weekly canary: does the plugin as shipped still work with the Omnigent releases published after its pin?
 
-Two questions per release, for the pinned SDK (hermes_omnigent/runtime.py installs omnigent==X.Y.Z) and every stable
+Two questions per release, for the pinned SDK (OMNIGENT_VERSION in hermes_omnigent/runtime.py) and every stable
 release newer than it (the newest few):
 
   server contract  tests/server-contract/run.py: the pinned SDK's adapter and managed host against a real local server of
@@ -11,6 +11,7 @@ release newer than it (the newest few):
 
     omnigent-canary.py run --work DIR --out results.json    (the check job; exits 1 if a server contract is not green)
     omnigent-canary.py report                               (reads $RESULTS; keeps one standing issue up to date)
+    omnigent-canary.py pin                                  (prints the pinned version; the CI workflows install this one)
 
 The issue is created on the first run and then only edited. It is commented on (and reopened if somebody closed it) when a
 result changes or a new release appears, never otherwise. Nothing here changes the plugin's behaviour.
@@ -40,11 +41,11 @@ ICON = {'pass': '✅', 'fail': '❌', 'error': '⚠️'}
 # --- pure parts (tests/test_canary.py) ---------------------------------------------------------------------
 
 def pinned(runtime_source):
-    """The Omnigent version the plugin installs for itself, read from the one place that installs it."""
-    found = set(re.findall(r'omnigent==(\d+\.\d+\.\d+)', runtime_source))
+    """The Omnigent version the plugin installs for itself: the OMNIGENT_VERSION constant of hermes_omnigent/runtime.py."""
+    found = re.findall(r"^OMNIGENT_VERSION = '(\d+\.\d+\.\d+)'$", runtime_source, re.M)
     if len(found) != 1:
-        raise SystemExit(f'expected exactly one omnigent==X.Y.Z pin in hermes_omnigent/runtime.py, found {sorted(found)}')
-    return found.pop()
+        raise SystemExit(f"expected exactly one OMNIGENT_VERSION = 'X.Y.Z' line in hermes_omnigent/runtime.py, found {found}")
+    return found[0]
 
 
 def key(version):
@@ -285,6 +286,11 @@ def report(_args):
     return 0
 
 
+def print_pin(_args):
+    print(pinned((ROOT / 'hermes_omnigent' / 'runtime.py').read_text()))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     commands = parser.add_subparsers(dest='command', required=True)
@@ -294,6 +300,7 @@ def main(argv=None):
     runner.add_argument('--limit', type=int, default=4, help='how many releases newer than the pin to check (default 4)')
     runner.set_defaults(handler=run)
     commands.add_parser('report', help='update the standing issue from $RESULTS').set_defaults(handler=report)
+    commands.add_parser('pin', help='print the pinned Omnigent version (what the CI workflows install)').set_defaults(handler=print_pin)
     args = parser.parse_args(argv)
     return args.handler(args)
 

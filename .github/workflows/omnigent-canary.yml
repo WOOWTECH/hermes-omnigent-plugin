@@ -30,7 +30,7 @@ jobs:
           python-version: '3.12'
       - name: Check the pinned SDK and the newest releases above it
         # Exits 1 when a server contract is not green; anchors that no longer match are reported, not failed (all releases
-        # after 0.16 are in that state until the compatibility layer is upgraded).
+        # after the pin may be in that state until the compatibility layer is upgraded).
         run: python .github/scripts/omnigent-canary.py run --work "$RUNNER_TEMP/canary" --out "$RUNNER_TEMP/results.json"
       - name: Hand the results to the report job
         id: results

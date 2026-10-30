@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 from pathlib import Path
 import shutil
 import tempfile
@@ -33,11 +34,25 @@ def release(*versions, yanked=()):
 
 class CanaryTests(unittest.TestCase):
     def test_the_pin_is_read_from_the_installer(self):
-        self.assertRegex(canary.pinned((ROOT / 'hermes_omnigent' / 'runtime.py').read_text()), r'^\d+\.\d+\.\d+$')
+        source = (ROOT / 'hermes_omnigent' / 'runtime.py').read_text()
+        self.assertRegex(canary.pinned(source), r'^\d+\.\d+\.\d+$')
+        self.assertEqual(canary.pinned("OMNIGENT_VERSION = '0.19.1'\n"), '0.19.1')
         with self.assertRaises(SystemExit):
             canary.pinned('nothing pinned here')
         with self.assertRaises(SystemExit):
-            canary.pinned("'omnigent==0.16.0' and 'omnigent==0.17.0'")
+            canary.pinned("OMNIGENT_VERSION = '0.16.0'\nOMNIGENT_VERSION = '0.17.0'\n")
+
+    def test_every_copy_of_the_pin_agrees_with_the_constant(self):
+        """A half-finished bump (code moved, CI or README not) must fail here, not in production."""
+        from hermes_omnigent.runtime import OMNIGENT_VERSION
+        self.assertEqual(canary.pinned((ROOT / 'hermes_omnigent' / 'runtime.py').read_text()), OMNIGENT_VERSION)
+        workflow = (ROOT / '.github' / 'workflows' / 'test.yml').read_text()
+        # CI asks the canary script for the pin instead of repeating it
+        self.assertEqual(re.findall(r'omnigent==(\d\S*)', workflow), [])
+        self.assertEqual(len(re.findall(r'omnigent-canary\.py pin', workflow)), 2)
+        self.assertIn('--expect-sdk-version "$SDK_VERSION"', workflow)
+        readme = (ROOT / 'README.md').read_text()
+        self.assertEqual(set(re.findall(r'pip install omnigent==(\S+)', readme)), {OMNIGENT_VERSION})
 
     def test_only_stable_unyanked_releases_above_the_pin_count_newest_few_oldest_first(self):
         index = release('0.9.0', '0.16.0', '0.17.0', '0.18.0', '0.19.1', '0.20.0', '0.21.0rc1', '0.21.0', '0.22.0', '0.10.0', yanked=('0.22.0',))
@@ -117,7 +132,7 @@ class CanaryTests(unittest.TestCase):
 
 class AnchorCheckTests(unittest.TestCase):
     FILES = ['host/connect.py', 'harnesses/hermes_native/bridge.py', 'harnesses/hermes_native/forwarder.py', 'runner/app.py',
-             'runner/native/orchestration.py', 'onboarding/harness_readiness.py']
+             'runner/model_option_routes.py', 'runner/native/orchestration.py', 'onboarding/harness_readiness.py']
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
