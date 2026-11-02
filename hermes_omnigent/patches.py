@@ -1,7 +1,7 @@
 """Exact source transformations of the pinned Omnigent release in the plugin-owned venv."""
 from pathlib import Path
 
-MARKER = '# hermes-omnigent-plugin compatibility v18'
+MARKER = '# hermes-omnigent-plugin compatibility v19'
 
 
 def make_edits(sdk, source_overrides=None):
@@ -173,9 +173,18 @@ def make_edits(sdk, source_overrides=None):
         anchor = '        harness = _session_harness_name(session_id)\n        if harness == "claude-native":\n            return await get_session_claude_model_options(session_id)\n'
         if source.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
+        # A failed or timed-out inventory is a retryable 503 with the SDK's own error shape (as for the Codex and Claude catalogs),
+        # never an unhandled exception.
         return source.replace(anchor, '        harness = _session_harness_name(session_id)\n' + '''        if harness == "hermes-native":
-            from hermes_omnigent.compat import hermes_models
-            return JSONResponse({"models": await asyncio.to_thread(hermes_models)})
+            try:
+                from hermes_omnigent.compat import hermes_models
+                return JSONResponse({"models": await asyncio.to_thread(hermes_models)})
+            except Exception:
+                _logger.warning("Hermes-native model options unavailable for session=%s", session_id, exc_info=True)
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "hermes_native_model_options_failed", "detail": "The Hermes model inventory is unavailable."},
+                )
 ''' + '        if harness == "claude-native":\n            return await get_session_claude_model_options(session_id)\n')
 
     def readiness(source):

@@ -1,13 +1,18 @@
 """Hermes model/profile support for this plugin's private Omnigent (the release pinned in runtime.OMNIGENT_VERSION)."""
 import asyncio
+import concurrent.futures
 import json
+import logging
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
 import sqlite3
+import threading
 import time
+
+_logger = logging.getLogger(__name__)
 
 
 def retained_hermes_state(bridge_dir):
@@ -105,22 +110,118 @@ def native_gateway(action, home):
         raise RuntimeError('HERMES_GATEWAY_FAILED')
 
 
-def hermes_models():
+# One inventory run costs a Python start, Hermes' imports and a probe of the active endpoint: 2-4 s on a quick host and far more on a
+# slow one, while Omnigent waits 5 s (before a session exists) or 15 s (the picker) for the answer. A complete answer is therefore
+# kept for a minute (and dropped as soon as Hermes' own configuration files change), and callers that arrive while a run is in
+# progress share it instead of each starting another Python process. Only an answer that models.py itself reports complete is kept:
+# an incomplete one (the endpoint did not list its models), a failure, and an answer from a models.py that reports nothing are
+# returned to the callers that waited for them but never kept, so the next call asks again.
+MODELS_TTL_S = 60.0
+MODELS_WAIT_S = 60.0  # how long a caller waits for a run it shares; a run itself is bounded by the 45 s process timeout
+MODELS_COMPLETE_MARKER = 'HERMES_MODELS_COMPLETE'  # models.py prints one of these two lines on stderr
+MODELS_DEGRADED_MARKER = 'HERMES_MODELS_DEGRADED'
+MODEL_OPTIONS_FAILED = 'hermes_native_model_options_failed'  # the code of the 503 the SDK's own catalog routes use too
+_models_clock = time.monotonic
+_models_lock = threading.Lock()
+_models_kept = None  # (key, expires_at, rows) of the last complete answer
+_models_flight = None  # (key, future) of the run in progress
+
+
+def _forget_models_after_fork():
+    # A runner forked while another thread held the lock, or was running an inventory, must not wait for a thread that does not
+    # exist in the child.
+    global _models_lock, _models_kept, _models_flight
+    _models_lock = threading.Lock()
+    _models_kept = _models_flight = None
+
+
+reset_hermes_models = _forget_models_after_fork
+if hasattr(os, 'register_at_fork'):
+    os.register_at_fork(after_in_child=_forget_models_after_fork)
+
+
+def _models_key():
+    profile = os.environ.get('HERMES_OMNIGENT_PROFILE')
+    if not profile:
+        return None  # nothing to tell a changed configuration by, so nothing is kept
+    stamps = []
+    for name in ('config.yaml', '.env', 'auth.json'):
+        try:
+            info = (Path(profile) / name).stat()
+            stamps.append((info.st_mtime_ns, info.st_size))
+        except OSError:
+            stamps.append(None)
+    return (profile, os.environ.get('HERMES_OMNIGENT_PYTHON'), os.environ.get('HERMES_OMNIGENT_PYTHONPATH'), tuple(stamps))
+
+
+def _run_hermes_models():
+    """Start the inventory script once. Returns (rows, complete); complete is False when the active endpoint could not list its models."""
     python = os.environ['HERMES_OMNIGENT_PYTHON']
     script = Path(__file__).with_name('models.py')
     env = dict(os.environ)
     env.pop('PYTHONPATH', None)
     if env.get('HERMES_OMNIGENT_PYTHONPATH'):
         env['PYTHONPATH'] = env['HERMES_OMNIGENT_PYTHONPATH']
-    process = subprocess.run([python, str(script)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                             text=True, timeout=45, env=env)
+    process = subprocess.run([python, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, errors='replace', timeout=45, env=env)
     if process.returncode or len(process.stdout) > 262144:
         raise RuntimeError('HERMES_MODELS_UNAVAILABLE')
     rows = json.loads(process.stdout)
     if not isinstance(rows, list):
         raise RuntimeError('HERMES_MODELS_UNAVAILABLE')
-    return [row for row in rows if isinstance(row, dict) and isinstance(row.get('id'), str)
+    rows = [row for row in rows if isinstance(row, dict) and isinstance(row.get('id'), str)
             and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9/_.:\-]{0,200}', row['id'])]
+    # stderr is read for these two fixed lines only; nothing else from it is kept or logged.
+    lines = (getattr(process, 'stderr', None) or '').splitlines()
+    complete = MODELS_COMPLETE_MARKER in lines and MODELS_DEGRADED_MARKER not in lines
+    if MODELS_DEGRADED_MARKER in lines:
+        _logger.warning('The Hermes model inventory is incomplete: the active endpoint did not list its models. '
+                        'The list is not kept; the next call asks again.')
+    elif not complete:
+        _logger.info('The Hermes model inventory script did not say whether its list is complete; the list is not kept.')
+    return rows, complete
+
+
+def hermes_models():
+    """Hermes' model inventory, for the picker and for checking a model change (see the notes above on when a run is shared)."""
+    global _models_kept, _models_flight
+    key = _models_key()
+    with _models_lock:
+        kept = _models_kept
+        if key is not None and kept is not None and kept[0] == key and kept[1] > _models_clock():
+            return [dict(row) for row in kept[2]]
+        flight = _models_flight
+        if flight is not None and flight[0] == key:
+            future, leader = flight[1], False
+        else:
+            future, leader = concurrent.futures.Future(), True
+            _models_flight = (key, future)
+    if not leader:
+        try:
+            rows = future.result(timeout=MODELS_WAIT_S)  # only a vanished leader gets here
+        except concurrent.futures.TimeoutError:
+            with _models_lock:
+                if _models_flight is not None and _models_flight[1] is future:
+                    _models_flight = None  # or every later caller would wait for it too
+            raise RuntimeError('HERMES_MODELS_UNAVAILABLE') from None
+        return [dict(row) for row in rows]
+    try:
+        rows, complete = _run_hermes_models()
+    except BaseException as error:
+        with _models_lock:
+            if _models_flight is not None and _models_flight[1] is future:
+                _models_flight = None
+        future.set_exception(error)
+        raise
+    with _models_lock:
+        current = _models_flight is not None and _models_flight[1] is future
+        if current:
+            _models_flight = None
+        # A run that a configuration change or a timed-out wait has replaced must not overwrite what a newer run kept.
+        if current and complete and key is not None:
+            _models_kept = (key, _models_clock() + MODELS_TTL_S, rows)
+    future.set_result(rows)
+    return [dict(row) for row in rows]
 
 
 def shared_local_model_config(config):
@@ -216,7 +317,12 @@ def inject_hermes_model(bridge_dir, model):
 
 async def change_model(session_id, model):
     from starlette.responses import JSONResponse, Response
-    rows = await asyncio.to_thread(hermes_models)
+    try:
+        rows = await asyncio.to_thread(hermes_models)
+    except Exception:
+        # The inventory is what a model is checked against before it reaches a terminal command: without it nothing changes.
+        _logger.warning('The Hermes model inventory is unavailable; the model change was not applied', exc_info=True)
+        return JSONResponse({'error': MODEL_OPTIONS_FAILED, 'detail': 'The Hermes model inventory is unavailable.'}, status_code=503)
     if model is None:
         model = next((row['id'] for row in rows if row.get('isDefault')), None)
     allowed = {row['id'] for row in rows}

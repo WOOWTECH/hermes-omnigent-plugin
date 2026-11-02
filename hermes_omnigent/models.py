@@ -1,6 +1,7 @@
 """Hermes-owned model inventory; prints whitelisted identifiers only."""
 import json
 import os
+import sys
 
 os.environ['HERMES_HOME'] = os.environ['HERMES_OMNIGENT_PROFILE']
 from hermes_cli.config import load_env
@@ -17,11 +18,15 @@ inventory = build_models_payload(context, explicit_only=True, include_unconfigur
 # probe only the active endpoint; keep the configured model when unavailable.
 custom_models = None
 fallback_endpoint = bool(context.current_base_url) and not any(p.get('is_current') for p in inventory.get('providers', []))
-if bare_custom or fallback_endpoint:
+probed = bare_custom or fallback_endpoint
+if probed:
     try:
         from hermes_cli.runtime_provider import resolve_runtime_provider
         from hermes_cli.models import fetch_api_models
         runtime = resolve_runtime_provider(requested=context.current_provider)
+        # One try, 5 s: fetch_api_models asks the base URL and then its /v1 variant, each with this timeout, and remembers an
+        # all-timeout result for a minute inside this process. So 5 s is what keeps the whole script inside Omnigent's 15 s picker
+        # wait, and a second try here could not help; the next call starts a new process and asks again.
         custom_models = fetch_api_models(runtime.get('api_key'), runtime.get('base_url'),
                                         timeout=5.0, api_mode=runtime.get('api_mode'))
     except Exception:
@@ -47,3 +52,5 @@ if fallback_endpoint and not rows:
             rows.append({'id': identifier, 'displayName': identifier, 'model': identifier,
                          'isDefault': identifier == inventory.get('model')})
 print(json.dumps(rows))
+# The one status line the caller relies on: a list built without the endpoint's own answer is reported, so it is never kept.
+print('HERMES_MODELS_DEGRADED' if probed and not custom_models else 'HERMES_MODELS_COMPLETE', file=sys.stderr)

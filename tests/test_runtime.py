@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -84,6 +85,69 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(result['available'])
         self.assertEqual(result['path'], str(uv))
         self.assertEqual(result['version'], '0.13.5')
+
+    @contextlib.contextmanager
+    def fake_binaries(self, probe):
+        """Real executables for every name discover() looks for, with `probe` standing in for the version command."""
+        runtime = Runtime(self.home, active=lambda: True)
+        bin_dir = runtime.root / 'bin'
+        bin_dir.mkdir(parents=True)
+        for name in ('hermes', 'claude', 'codex', 'pi', 'omnigent', 'uv', 'tmux', 'bwrap'):
+            (bin_dir / name).write_text('#!/bin/sh\necho "tool 1.2.3"\n')
+            (bin_dir / name).chmod(0o755)
+        with patch('hermes_omnigent.runtime._cache', {}), patch('hermes_omnigent.runtime.subprocess.run', side_effect=probe):
+            yield runtime
+
+    def test_every_version_probe_gets_time_to_finish_before_a_binary_counts_as_missing(self):
+        """A Node or Python CLI on a slow host (a Raspberry Pi's SD card) needs more than a few seconds for --version. A probe that
+        times out reads as "not installed", and the installer then reinstalls Omnigent or fetches tmux again."""
+        timeouts = {}
+
+        def probe(command, **kwargs):
+            timeouts[Path(command[0]).name] = kwargs['timeout']
+            return SimpleNamespace(returncode=0, stdout='tool 1.2.3', stderr='')
+        with self.fake_binaries(probe) as runtime:
+            result = runtime.discover()
+        self.assertEqual(set(timeouts), {'hermes', 'claude', 'codex', 'pi', 'omnigent', 'uv', 'tmux', 'bwrap'})
+        self.assertEqual(set(timeouts.values()), {30})
+        self.assertTrue(all(entry['available'] and entry['version'] == '1.2.3' for entry in result.values()))
+
+    def test_a_probe_that_times_out_reports_the_binary_unavailable_and_is_not_repeated_at_once(self):
+        calls = []
+
+        def probe(command, **kwargs):
+            name = Path(command[0]).name
+            calls.append(name)
+            if name == 'omnigent':
+                raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+            return SimpleNamespace(returncode=0, stdout='tool 1.2.3', stderr='')
+        with self.fake_binaries(probe) as runtime:
+            first = runtime.discover()
+            second = runtime.discover()
+        self.assertEqual(first['omnigent'], {'available': False, 'path': str(runtime.root / 'bin/omnigent')})
+        self.assertEqual(second['omnigent'], first['omnigent'])
+        self.assertTrue(first['hermes']['available'] and second['hermes']['available'])
+        self.assertEqual(calls.count('omnigent'), 1)  # a status poll does not wait the full probe time on every call
+        self.assertEqual(calls.count('hermes'), 1)
+
+    def test_a_fresh_discovery_ignores_a_remembered_timeout(self):
+        """Right after an installer ran, a timeout remembered from before it says nothing about the new binary."""
+        calls = []
+
+        def probe(command, **kwargs):
+            name = Path(command[0]).name
+            calls.append(name)
+            if name == 'omnigent' and calls.count('omnigent') == 1:
+                raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+            return SimpleNamespace(returncode=0, stdout='tool 1.2.3', stderr='')
+        with self.fake_binaries(probe) as runtime:
+            self.assertFalse(runtime.discover()['omnigent']['available'])
+            self.assertFalse(runtime.discover()['omnigent']['available'])  # remembered
+            self.assertEqual(calls.count('omnigent'), 1)
+            self.assertTrue(runtime.discover(fresh=True)['omnigent']['available'])  # asked again
+            self.assertEqual(calls.count('omnigent'), 2)
+            self.assertTrue(runtime.discover()['omnigent']['available'])  # and the good answer is what is remembered now
+            self.assertEqual(calls.count('omnigent'), 2)
 
     def test_native_yaml_reader_preserves_enabled_and_disabled_policy_without_pyyaml(self):
         import yaml
