@@ -22,7 +22,7 @@ SENTINEL = 'OMNIGENT_CONNECTION_OK'
 # The Omnigent release this plugin installs for itself and patches (hermes_omnigent/patches.py). The compatibility installer,
 # the CI workflows and the weekly canary all read it from here; a plugin update that moves it makes the next activation
 # reinstall the private runtime (see Runtime.install).
-OMNIGENT_VERSION = '0.19.1'
+OMNIGENT_VERSION = '0.20.0'
 _cache = {}
 _cache_lock = threading.Lock()
 PROBE_TIMEOUT_S = 30  # --version of every binary discover() looks for
