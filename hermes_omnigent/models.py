@@ -1,7 +1,6 @@
 """Hermes-owned model inventory; prints whitelisted identifiers only."""
 import json
 import os
-import sys
 
 os.environ['HERMES_HOME'] = os.environ['HERMES_OMNIGENT_PROFILE']
 from hermes_cli.config import load_env
@@ -51,6 +50,7 @@ if fallback_endpoint and not rows:
         if identifier and identifier not in {row['id'] for row in rows}:
             rows.append({'id': identifier, 'displayName': identifier, 'model': identifier,
                          'isDefault': identifier == inventory.get('model')})
+# The last element is a status record, not a model (it has no id, so an older caller drops it): a list built without the
+# endpoint's own answer says so, and the caller never keeps it.
+rows.append({'inventory': 'degraded' if probed and not custom_models else 'complete'})
 print(json.dumps(rows))
-# The one status line the caller relies on: a list built without the endpoint's own answer is reported, so it is never kept.
-print('HERMES_MODELS_DEGRADED' if probed and not custom_models else 'HERMES_MODELS_COMPLETE', file=sys.stderr)
