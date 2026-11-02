@@ -2,21 +2,11 @@
 import json
 import os
 import sys
-import time
 
 os.environ['HERMES_HOME'] = os.environ['HERMES_OMNIGENT_PROFILE']
 from hermes_cli.config import load_env
 os.environ.update(load_env())
 from hermes_cli.inventory import load_picker_context, build_models_payload
-
-# Omnigent waits 15 s for this whole script (the model picker; 5 s before a session exists). The imports and the inventory
-# take 2-4 s on a quick host, so the active endpoint's /models gets at most 9 s in two tries: a slow endpoint fits in the
-# first, a transient failure is retried. stderr carries one fixed line when the endpoint could not list its models, so the
-# caller can tell an incomplete answer (never kept) from a complete one.
-PROBE_ATTEMPT_S = 6.0
-PROBE_BUDGET_S = 9.0
-PROBE_PAUSE_S = 0.5
-DEGRADED_MARKER = 'HERMES_MODELS_DEGRADED'
 
 context = load_picker_context()
 bare_custom = context.current_provider == 'custom' and bool(context.current_base_url)
@@ -34,22 +24,13 @@ if probed:
         from hermes_cli.runtime_provider import resolve_runtime_provider
         from hermes_cli.models import fetch_api_models
         runtime = resolve_runtime_provider(requested=context.current_provider)
-        deadline = time.monotonic() + PROBE_BUDGET_S
-        for attempt in range(2):
-            remaining = deadline - time.monotonic()
-            if remaining < 1.0:
-                break
-            try:
-                custom_models = fetch_api_models(runtime.get('api_key'), runtime.get('base_url'),
-                                                 timeout=min(remaining, PROBE_ATTEMPT_S), api_mode=runtime.get('api_mode'))
-            except Exception:
-                custom_models = None
-            if custom_models:
-                break
-            if attempt == 0:
-                time.sleep(PROBE_PAUSE_S)
+        # One try, 5 s: fetch_api_models asks the base URL and then its /v1 variant, each with this timeout, and remembers an
+        # all-timeout result for a minute inside this process. So 5 s is what keeps the whole script inside Omnigent's 15 s picker
+        # wait, and a second try here could not help; the next call starts a new process and asks again.
+        custom_models = fetch_api_models(runtime.get('api_key'), runtime.get('base_url'),
+                                        timeout=5.0, api_mode=runtime.get('api_mode'))
     except Exception:
-        custom_models = None
+        pass
 rows = []
 for provider in inventory.get('providers', []):
     # Native --model preserves the current provider. Do not advertise an ID
@@ -71,5 +52,5 @@ if fallback_endpoint and not rows:
             rows.append({'id': identifier, 'displayName': identifier, 'model': identifier,
                          'isDefault': identifier == inventory.get('model')})
 print(json.dumps(rows))
-if probed and not custom_models:
-    print(DEGRADED_MARKER, file=sys.stderr)
+# The one status line the caller relies on: a list built without the endpoint's own answer is reported, so it is never kept.
+print('HERMES_MODELS_DEGRADED' if probed and not custom_models else 'HERMES_MODELS_COMPLETE', file=sys.stderr)

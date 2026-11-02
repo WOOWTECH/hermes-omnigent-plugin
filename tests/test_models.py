@@ -33,7 +33,7 @@ class ModelInventoryTests(unittest.TestCase):
         }
         output = io.StringIO()
         with patch.dict('sys.modules', modules), patch.dict('os.environ', {'HERMES_OMNIGENT_PROFILE': '/private/test-profile'}), \
-                patch('time.sleep'), contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
             runpy.run_path(str(Path(__file__).resolve().parents[1] / 'hermes_omnigent/models.py'), run_name='__main__')
         self.assertNotIn('provider-key-stay-private', output.getvalue())
         self.assertNotIn('sensitive', output.getvalue())
@@ -61,16 +61,17 @@ class ModelInventoryTests(unittest.TestCase):
         self.assertEqual([row['id'] for row in rows], ['real/default'])
 
 
-class ModelProbeBudgetTests(unittest.TestCase):
-    """The active endpoint's /models is the only source of a custom provider's list: a failed probe must be retried inside a
-    budget that fits Omnigent's 15 s picker timeout, and an answer built without it must say so instead of looking complete."""
+class ModelStatusLineTests(unittest.TestCase):
+    """The caller keeps an answer only when this script says on stderr that the endpoint's own list is in it. The probe stays one
+    try of 5 s: Hermes' fetch_api_models asks two URLs per call, each with that timeout, and remembers an all-timeout result for a
+    minute inside the process, so a longer timeout would overrun Omnigent's 15 s picker wait and a second try could not help."""
 
-    def run_inventory(self, answers=(), *, behavior=None, clock=None, provider='custom', base_url='https://provider.example/v1', listed=None):
+    def run_inventory(self, answers=(), *, provider='custom', base_url='https://provider.example/v1', listed=None):
         context = types.SimpleNamespace(current_provider=provider, current_base_url=base_url)
         providers = [{'slug': provider, 'is_current': True, 'models': listed if listed is not None else ['real/default']}]
         build = Mock(return_value={'model': 'real/default', 'providers': providers})
         resolve = Mock(return_value={'api_key': 'provider-key-stay-private', 'base_url': base_url, 'api_mode': 'chat_completions'})
-        fetch = Mock(side_effect=behavior or list(answers))
+        fetch = Mock(side_effect=list(answers))
         modules = {
             'hermes_cli': types.ModuleType('hermes_cli'),
             'hermes_cli.config': types.SimpleNamespace(load_env=lambda: {}),
@@ -80,54 +81,49 @@ class ModelProbeBudgetTests(unittest.TestCase):
         }
         out, err = io.StringIO(), io.StringIO()
         with patch.dict('sys.modules', modules), patch.dict('os.environ', {'HERMES_OMNIGENT_PROFILE': '/private/test-profile'}), \
-                patch('time.sleep', side_effect=(lambda seconds: setattr(clock, 'now', clock.now + seconds)) if clock else None) as sleep, \
-                patch('time.monotonic', side_effect=(lambda: clock.now)) if clock else contextlib.nullcontext(), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             runpy.run_path(str(Path(__file__).resolve().parents[1] / 'hermes_omnigent/models.py'), run_name='__main__')
         self.assertNotIn('provider-key-stay-private', out.getvalue() + err.getvalue())
         self.assertNotIn('sensitive', out.getvalue() + err.getvalue())
-        return json.loads(out.getvalue()), err.getvalue(), fetch, sleep
+        return json.loads(out.getvalue()), err.getvalue().splitlines(), fetch
 
-    def test_a_transient_failure_is_retried_and_the_list_stays_complete(self):
-        for first in (None, RuntimeError('sensitive upstream diagnostic')):
-            with self.subTest(first=repr(first)):
-                rows, err, fetch, sleep = self.run_inventory([first, ['real/default', 'real/fallback']])
-                self.assertEqual([row['id'] for row in rows], ['real/default', 'real/fallback'])
-                self.assertEqual(fetch.call_count, 2)
-                self.assertNotIn('HERMES_MODELS_DEGRADED', err)
-                sleep.assert_called_once()
-
-    def test_an_endpoint_that_never_lists_models_is_reported_as_degraded(self):
-        rows, err, fetch, _ = self.run_inventory([None, RuntimeError('sensitive upstream diagnostic')])
-        self.assertEqual([row['id'] for row in rows], ['real/default'])
-        self.assertEqual(fetch.call_count, 2)
-        self.assertEqual(err.splitlines().count('HERMES_MODELS_DEGRADED'), 1)
-
-    def test_an_answer_that_needed_no_retry_is_not_reported_as_degraded(self):
-        rows, err, fetch, sleep = self.run_inventory([['real/default', 'real/fallback']])
-        self.assertEqual(len(rows), 2)
+    def test_the_endpoint_is_asked_once_with_the_five_second_timeout(self):
+        rows, status, fetch = self.run_inventory([['real/default', 'real/fallback']])
+        self.assertEqual([row['id'] for row in rows], ['real/default', 'real/fallback'])
         fetch.assert_called_once()
-        sleep.assert_not_called()
-        self.assertEqual(err, '')
+        self.assertEqual(fetch.call_args.kwargs['timeout'], 5.0)
+        self.assertEqual(status, ['HERMES_MODELS_COMPLETE'])
 
-    def test_the_two_attempts_fit_inside_the_picker_budget_and_the_first_is_longer_than_the_old_five_seconds(self):
-        clock = types.SimpleNamespace(now=1000.0)
+    def test_an_endpoint_that_lists_nothing_is_reported_as_degraded(self):
+        for answer in (None, [], RuntimeError('sensitive upstream diagnostic')):
+            with self.subTest(answer=repr(answer)):
+                rows, status, fetch = self.run_inventory([answer])
+                self.assertEqual([row['id'] for row in rows], ['real/default'])  # the configured model, as before
+                fetch.assert_called_once()
+                self.assertEqual(status, ['HERMES_MODELS_DEGRADED'])
 
-        def endpoint(key, base, timeout, api_mode):  # never answers: each attempt uses the whole timeout it was given
-            clock.now += timeout
-            return None
-        _, _, fetch, _ = self.run_inventory(behavior=endpoint, clock=clock)
-        timeouts = [call.kwargs['timeout'] for call in fetch.call_args_list]
-        self.assertGreater(timeouts[0], 5.0)
-        self.assertEqual(len(timeouts), 2)
-        # Omnigent waits 15 s for the whole inventory and the imports and the picker inventory take 2-4 s of that.
-        self.assertLessEqual(clock.now - 1000.0, 9.0 + 1e-6)
+    def test_an_endpoint_that_cannot_even_be_resolved_is_reported_as_degraded(self):
+        context = types.SimpleNamespace(current_provider='custom', current_base_url='https://provider.example/v1')
+        modules = {
+            'hermes_cli': types.ModuleType('hermes_cli'),
+            'hermes_cli.config': types.SimpleNamespace(load_env=lambda: {}),
+            'hermes_cli.inventory': types.SimpleNamespace(load_picker_context=lambda: context, build_models_payload=Mock(
+                return_value={'model': 'real/default', 'providers': [{'slug': 'custom', 'is_current': True, 'models': ['real/default']}]})),
+            'hermes_cli.runtime_provider': types.SimpleNamespace(resolve_runtime_provider=Mock(side_effect=RuntimeError('sensitive'))),
+            'hermes_cli.models': types.SimpleNamespace(fetch_api_models=Mock()),
+        }
+        out, err = io.StringIO(), io.StringIO()
+        with patch.dict('sys.modules', modules), patch.dict('os.environ', {'HERMES_OMNIGENT_PROFILE': '/private/test-profile'}), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            runpy.run_path(str(Path(__file__).resolve().parents[1] / 'hermes_omnigent/models.py'), run_name='__main__')
+        self.assertEqual(err.getvalue().splitlines(), ['HERMES_MODELS_DEGRADED'])
+        self.assertNotIn('sensitive', out.getvalue() + err.getvalue())
 
-    def test_a_provider_with_its_own_list_never_probes_an_endpoint(self):
-        rows, err, fetch, _ = self.run_inventory([], provider='openai-codex', base_url='', listed=['m1', 'm2'])
+    def test_a_provider_with_its_own_list_never_probes_an_endpoint_and_is_complete(self):
+        rows, status, fetch = self.run_inventory([], provider='openai-codex', base_url='', listed=['m1', 'm2'])
         self.assertEqual([row['id'] for row in rows], ['m1', 'm2'])
         fetch.assert_not_called()
-        self.assertEqual(err, '')
+        self.assertEqual(status, ['HERMES_MODELS_COMPLETE'])
 
 
 if __name__ == '__main__':

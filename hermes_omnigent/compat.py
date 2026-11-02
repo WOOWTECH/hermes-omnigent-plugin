@@ -113,10 +113,13 @@ def native_gateway(action, home):
 # One inventory run costs a Python start, Hermes' imports and a probe of the active endpoint: 2-4 s on a quick host and far more on a
 # slow one, while Omnigent waits 5 s (before a session exists) or 15 s (the picker) for the answer. A complete answer is therefore
 # kept for a minute (and dropped as soon as Hermes' own configuration files change), and callers that arrive while a run is in
-# progress share it instead of each starting another Python process. An incomplete answer (the endpoint did not list its models)
-# and a failure are returned to the callers that waited for them but never kept, so the next call asks again.
+# progress share it instead of each starting another Python process. Only an answer that models.py itself reports complete is kept:
+# an incomplete one (the endpoint did not list its models), a failure, and an answer from a models.py that reports nothing are
+# returned to the callers that waited for them but never kept, so the next call asks again.
 MODELS_TTL_S = 60.0
-MODELS_DEGRADED_MARKER = 'HERMES_MODELS_DEGRADED'  # the one line models.py prints on stderr for an incomplete answer
+MODELS_WAIT_S = 60.0  # how long a caller waits for a run it shares; a run itself is bounded by the 45 s process timeout
+MODELS_COMPLETE_MARKER = 'HERMES_MODELS_COMPLETE'  # models.py prints one of these two lines on stderr
+MODELS_DEGRADED_MARKER = 'HERMES_MODELS_DEGRADED'
 MODEL_OPTIONS_FAILED = 'hermes_native_model_options_failed'  # the code of the 503 the SDK's own catalog routes use too
 _models_clock = time.monotonic
 _models_lock = threading.Lock()
@@ -168,11 +171,14 @@ def _run_hermes_models():
         raise RuntimeError('HERMES_MODELS_UNAVAILABLE')
     rows = [row for row in rows if isinstance(row, dict) and isinstance(row.get('id'), str)
             and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9/_.:\-]{0,200}', row['id'])]
-    # stderr is read for this one fixed line only; nothing else from it is kept or logged.
-    complete = MODELS_DEGRADED_MARKER not in (getattr(process, 'stderr', None) or '').splitlines()
-    if not complete:
+    # stderr is read for these two fixed lines only; nothing else from it is kept or logged.
+    lines = (getattr(process, 'stderr', None) or '').splitlines()
+    complete = MODELS_COMPLETE_MARKER in lines and MODELS_DEGRADED_MARKER not in lines
+    if MODELS_DEGRADED_MARKER in lines:
         _logger.warning('The Hermes model inventory is incomplete: the active endpoint did not list its models. '
                         'The list is not kept; the next call asks again.')
+    elif not complete:
+        _logger.info('The Hermes model inventory script did not say whether its list is complete; the list is not kept.')
     return rows, complete
 
 
@@ -192,8 +198,11 @@ def hermes_models():
             _models_flight = (key, future)
     if not leader:
         try:
-            rows = future.result(timeout=60)  # a run is bounded by the 45 s process timeout; this only guards a vanished leader
+            rows = future.result(timeout=MODELS_WAIT_S)  # only a vanished leader gets here
         except concurrent.futures.TimeoutError:
+            with _models_lock:
+                if _models_flight is not None and _models_flight[1] is future:
+                    _models_flight = None  # or every later caller would wait for it too
             raise RuntimeError('HERMES_MODELS_UNAVAILABLE') from None
         return [dict(row) for row in rows]
     try:
@@ -205,9 +214,11 @@ def hermes_models():
         future.set_exception(error)
         raise
     with _models_lock:
-        if _models_flight is not None and _models_flight[1] is future:
+        current = _models_flight is not None and _models_flight[1] is future
+        if current:
             _models_flight = None
-        if complete and key is not None:
+        # A run that a configuration change or a timed-out wait has replaced must not overwrite what a newer run kept.
+        if current and complete and key is not None:
             _models_kept = (key, _models_clock() + MODELS_TTL_S, rows)
     future.set_result(rows)
     return [dict(row) for row in rows]

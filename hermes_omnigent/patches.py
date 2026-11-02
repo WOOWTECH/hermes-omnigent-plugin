@@ -176,8 +176,8 @@ def make_edits(sdk, source_overrides=None):
         # A failed or timed-out inventory is a retryable 503 with the SDK's own error shape (as for the Codex and Claude catalogs),
         # never an unhandled exception.
         return source.replace(anchor, '        harness = _session_harness_name(session_id)\n' + '''        if harness == "hermes-native":
-            from hermes_omnigent.compat import hermes_models
             try:
+                from hermes_omnigent.compat import hermes_models
                 return JSONResponse({"models": await asyncio.to_thread(hermes_models)})
             except Exception:
                 _logger.warning("Hermes-native model options unavailable for session=%s", session_id, exc_info=True)

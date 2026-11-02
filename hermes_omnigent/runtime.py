@@ -197,7 +197,8 @@ class Runtime:
             pass
         return None
 
-    def discover(self):
+    def discover(self, fresh=False):
+        """fresh=True ignores what was remembered: used right after an installer ran, when a remembered timeout is stale."""
         if self._find:
             return self._find()
         env = self.environment()
@@ -214,7 +215,7 @@ class Runtime:
                 key = (binary, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns, str(self.home))
                 with _cache_lock:
                     cached = _cache.get(key)
-                if not cached or cached[0] < time.monotonic():
+                if fresh or not cached or cached[0] < time.monotonic():
                     # A Node or Python CLI on a slow host (an SD card) can need many seconds for --version, and a probe that
                     # times out reads as "not installed": the installer then reinstalls Omnigent or fetches tmux again.
                     probe = subprocess.run([binary, '-V' if name == 'tmux' else '--version'],
@@ -408,11 +409,11 @@ class Runtime:
         if not deps.get('tmux', {}).get('available'):
             from .dependencies import private_tmux
             private_tmux(self.root)
-            deps = self.discover()
+            deps = self.discover(fresh=True)
         if not deps.get('bwrap', {}).get('available'):
             from .dependencies import private_tmux
             private_tmux(self.root, tool='bwrap')
-            deps = self.discover()
+            deps = self.discover(fresh=True)
         self.check_sandbox(deps)
         binary = deps.get('omnigent', {}).get('path')
         private = bool(deps.get('omnigent', {}).get('available') and binary and Path(binary).resolve().is_relative_to(self.root / 'uv/tools'))
@@ -437,7 +438,7 @@ class Runtime:
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900, env=env)
         if result.returncode:
             raise Failure('OMNIGENT_INSTALL_FAILED')
-        deps = self.discover()
+        deps = self.discover(fresh=True)
         if not deps.get('omnigent', {}).get('available'):
             raise Failure('OMNIGENT_MISSING')
         self.install_compatibility(deps['omnigent']['path'])

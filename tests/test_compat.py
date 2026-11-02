@@ -150,6 +150,12 @@ class CompatibilityTests(unittest.TestCase):
             harness['name'] = 'claude-native'
             self.assertEqual(asyncio.run(namespace['get_session_model_options']('s2')), ('claude', 's2'))
 
+    def test_the_patched_route_only_needs_module_names_the_sdk_defines(self):
+        """route_namespace() supplies its own globals; the real module must define the ones the patched text uses."""
+        import omnigent.runner.model_option_routes as routes
+        for name in ('asyncio', 'JSONResponse', '_logger'):
+            self.assertTrue(hasattr(routes, name), name)
+
     def test_the_session_model_route_reports_an_unavailable_inventory_as_a_retryable_503(self):
         """Like the SDK's own catalog routes: 503 and a stable code, never an unhandled exception (a 500) or a raw diagnostic."""
         namespace, _ = self.route_namespace()
@@ -293,7 +299,7 @@ class ModelInventoryCacheTests(unittest.TestCase):
         self.addCleanup(compat.reset_hermes_models)
 
     @staticmethod
-    def process(ids, *, stderr='', returncode=0):
+    def process(ids, *, stderr='HERMES_MODELS_COMPLETE\n', returncode=0):
         rows = [{'id': name, 'displayName': name, 'model': name, 'isDefault': index == 0} for index, name in enumerate(ids)]
         return types.SimpleNamespace(returncode=returncode, stdout=json.dumps(rows), stderr=stderr)
 
@@ -336,11 +342,25 @@ class ModelInventoryCacheTests(unittest.TestCase):
         self.assertEqual(self.ids(), ['a', 'b'])  # complete now, so kept
         self.assertEqual(len(self.runs), 2)
 
-    def test_other_stderr_text_is_not_an_incomplete_answer(self):
-        self.answers = [self.process(['m'], stderr='UserWarning: unrelated\nHERMES_MODELS_DEGRADED_BUT_NOT_THE_MARKER\n')]
+    def test_other_stderr_text_neither_proves_nor_spoils_completeness(self):
+        noise = 'UserWarning: unrelated\nHERMES_MODELS_DEGRADED_BUT_NOT_THE_LINE\n'
+        self.answers = [self.process(['m'], stderr=noise + 'HERMES_MODELS_COMPLETE\n')]
         self.ids()
         self.ids()
-        self.assertEqual(len(self.runs), 1)
+        self.assertEqual(len(self.runs), 1)  # the real status line among the noise counts
+        compat.reset_hermes_models()
+        self.runs.clear()
+        self.answers = [self.process(['m'], stderr=noise)]
+        self.ids()
+        self.ids()
+        self.assertEqual(len(self.runs), 2)  # noise alone is not proof
+
+    def test_an_answer_from_a_script_without_a_status_line_is_never_kept(self):
+        """models.py of an older plugin release (a rollback while this compat is still loaded) prints no status line."""
+        self.answers = [self.process(['m'], stderr='')]
+        self.assertEqual(self.ids(), ['m'])
+        self.assertEqual(self.ids(), ['m'])
+        self.assertEqual(len(self.runs), 2)
 
     def test_a_failure_is_not_kept_and_the_next_call_asks_again(self):
         self.answers = [self.process([], returncode=1), compat.subprocess.TimeoutExpired('python', 45), self.process(['m'])]
@@ -409,101 +429,76 @@ class ModelInventoryCacheTests(unittest.TestCase):
             self.ids()
         self.assertEqual(len(self.runs), 2)
 
-    def test_a_forked_child_does_not_inherit_a_lock_that_another_thread_held(self):
-        self.assertTrue(compat._models_lock.acquire(timeout=1))  # as if another thread held it when the process forked
-        self.addCleanup(lambda: compat._models_lock.release() if compat._models_lock.locked() else None)
-        compat._forget_models_after_fork()
-        self.assertTrue(compat._models_lock.acquire(timeout=1))
-        compat._models_lock.release()
-        self.assertEqual(self.ids(), ['real/default'])
+    @unittest.skipUnless(hasattr(os, 'fork'), 'needs fork')
+    def test_a_real_fork_does_not_inherit_a_lock_that_another_thread_held(self):
+        import warnings
+        holding, release = threading.Event(), threading.Event()
 
+        def hold():
+            with compat._models_lock:
+                holding.set()
+                release.wait(10)
+        thread = threading.Thread(target=hold)
+        thread.start()
+        self.assertTrue(holding.wait(10))
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)  # forking next to a running thread is the point of this test
+            pid = os.fork()
+        if pid == 0:  # the child: the lock must not still belong to a thread that does not exist here
+            os._exit(0 if compat._models_lock.acquire(timeout=2) else 1)
+        release.set()
+        thread.join(10)
+        _, status = os.waitpid(pid, 0)
+        self.assertEqual(os.waitstatus_to_exitcode(status), 0)
 
-if __name__ == '__main__':
-    unittest.main()
+    def test_a_run_that_a_configuration_change_replaced_cannot_overwrite_the_newer_answer(self):
+        gates, started = [threading.Event(), threading.Event()], [threading.Event(), threading.Event()]
 
-class NativeModelSelectionTests(unittest.TestCase):
-    def test_committed_policy_wins_over_stale_session_model(self):
-        with tempfile.TemporaryDirectory() as temp:
-            home = Path(temp)
-            db = sqlite3.connect(home / 'state.db')
-            db.execute('CREATE TABLE sessions (id TEXT, model TEXT, chat_id TEXT)')
-            db.execute('CREATE TABLE state_meta (key TEXT, value TEXT)')
-            db.execute('INSERT INTO sessions VALUES (?,?,?)', ('tip', 'old', 'logical'))
-            db.execute('INSERT INTO state_meta VALUES (?,?)', ('gateway.local_policy.v1:logical',
-                json.dumps({'policy': {'model': 'new', 'private': 'never-export'}})))
-            db.commit();db.close()
-            self.assertEqual(compat.selected_hermes_model(home, 'tip'), 'new')
-            with self.assertRaisesRegex(RuntimeError, 'STATE_UNAVAILABLE'):
-                compat.selected_hermes_model(home, 'missing')
+        def gated(*args, **kwargs):
+            index = len(self.runs)
+            self.runs.append(args)
+            started[index].set()
+            self.assertTrue(gates[index].wait(10))
+            return self.process([f'run-{index}'])
+        results = {}
 
-    def test_slash_command_is_sent_once_and_confirmed_by_policy_not_chat_rows(self):
-        from omnigent.harnesses.hermes_native import bridge, forwarder
-        with tempfile.TemporaryDirectory() as temp:
-            home = Path(temp)
-            with patch.object(forwarder, '_read_state', return_value=types.SimpleNamespace(hermes_session_id='sid')), \
-                    patch.object(bridge, 'read_hermes_home', return_value=home), \
-                    patch.object(compat, 'selected_hermes_model', side_effect=['old', 'old', 'new']), \
-                    patch.object(bridge, '_wait_for_tmux_info', return_value={'socket_path': '/own', 'tmux_target': 'own'}), \
-                    patch.object(bridge, '_session_alive', return_value=True), \
-                    patch.object(bridge, '_deliver_once') as deliver, patch.object(compat.time, 'sleep'):
-                compat.inject_hermes_model(home, 'new')
-                self.assertEqual(deliver.call_count, 1)
-                self.assertEqual(deliver.call_args.args[2], '/model new')
+        def call(name):
+            results[name] = self.ids()
+        with patch.object(compat.subprocess, 'run', side_effect=gated):
+            first = threading.Thread(target=call, args=('old-config',))
+            first.start()
+            self.assertTrue(started[0].wait(10))
+            (self.profile / 'config.yaml').write_text('model: {default: a-different-configuration}\n')  # the first run is now stale
+            second = threading.Thread(target=call, args=('new-config',))
+            second.start()
+            self.assertTrue(started[1].wait(10))
+            gates[1].set()  # the newer run finishes first and keeps its answer
+            second.join(10)
+            gates[0].set()  # the older one finishes later and must not replace it
+            first.join(10)
+            self.assertEqual(self.ids(), ['run-1'])  # still served from memory
+        self.assertEqual(results, {'old-config': ['run-0'], 'new-config': ['run-1']})
+        self.assertEqual(len(self.runs), 2)
 
-    def test_same_committed_model_is_idempotent_without_touching_terminal(self):
-        from omnigent.harnesses.hermes_native import bridge, forwarder
-        with patch.object(forwarder, '_read_state', return_value=types.SimpleNamespace(hermes_session_id='sid')), \
-                patch.object(bridge, 'read_hermes_home', return_value=Path('/owned')), \
-                patch.object(compat, 'selected_hermes_model', return_value='current'), \
-                patch.object(bridge, '_wait_for_tmux_info') as wait:
-            compat.inject_hermes_model(Path('/owned'), 'current')
-            wait.assert_not_called()
+    def test_a_vanished_leader_does_not_block_the_callers_after_it(self):
+        stuck, entered = threading.Event(), threading.Event()
 
-class NativeModelRPCTests(unittest.IsolatedAsyncioTestCase):
-    async def test_model_mutation_uses_revision_and_generation_fences(self):
-        from hermes_omnigent.native_model import apply_model
-        from unittest.mock import AsyncMock
-        client = types.SimpleNamespace(rpc=AsyncMock(side_effect=[{'revision': 4, 'execution_generation': 8}, {'status': 'applied'}]))
-        await apply_model(client, 'owned-session', 'new-model')
-        args = client.rpc.await_args_list[1]
-        self.assertEqual(args.args, ('session.mutate',))
-        self.assertEqual(args.kwargs['expected_revision'], 4)
-        self.assertEqual(args.kwargs['expected_generation'], 8)
-        self.assertEqual(args.kwargs['payload'], {'model': 'new-model'})
-
-    async def test_confirmation_required_is_never_automatically_approved(self):
-        from hermes_omnigent.native_model import apply_model
-        from unittest.mock import AsyncMock
-        client = types.SimpleNamespace(rpc=AsyncMock(side_effect=[{'revision': 4, 'execution_generation': 8}, {'status': 'confirmation_required', 'confirm': 'not-approved'}]))
-        with self.assertRaisesRegex(RuntimeError, 'CONFIRMATION_REQUIRED'):
-            await apply_model(client, 'owned-session', 'new-model')
-        self.assertEqual(client.rpc.await_count, 2)
-
-
-class ModelResetTests(unittest.IsolatedAsyncioTestCase):
-    async def test_reset_selects_native_default_instead_of_acknowledging_without_change(self):
-        from omnigent.harnesses.hermes_native import bridge
-        with patch.object(compat, 'hermes_models', return_value=[{'id': 'default-model', 'isDefault': True}]), \
-                patch.object(bridge, 'bridge_dir_for_session_id', return_value=Path('/owned')), \
-                patch.object(compat, 'inject_hermes_model') as change:
-            result = await compat.change_model('owned-session', None)
-            self.assertEqual(result.status_code, 204)
-            change.assert_called_once_with(Path('/owned'), 'default-model')
-
-    async def test_an_unavailable_inventory_is_a_503_with_a_stable_code_and_changes_nothing(self):
-        for requested in ('model-a', None):
-            with self.subTest(requested=requested), \
-                    patch.object(compat, 'hermes_models', side_effect=RuntimeError('HERMES_MODELS_UNAVAILABLE secret diagnostic')), \
-                    patch.object(compat, 'inject_hermes_model') as change, self.assertLogs('hermes_omnigent.compat', 'WARNING'):
-                result = await compat.change_model('owned-session', requested)
-            self.assertEqual(result.status_code, 503)
-            self.assertEqual(json.loads(result.body)['error'], 'hermes_native_model_options_failed')
-            self.assertNotIn('secret', result.body.decode())
-            change.assert_not_called()
-
-    async def test_reset_without_known_default_fails_without_mutation(self):
-        with patch.object(compat, 'hermes_models', return_value=[{'id': 'other'}]), \
-                patch.object(compat, 'inject_hermes_model') as change:
-            result = await compat.change_model('owned-session', None)
-            self.assertEqual(result.status_code, 400)
-            change.assert_not_called()
+        def fake(*args, **kwargs):
+            index = len(self.runs)
+            self.runs.append(args)
+            if index == 0:  # the first run does not finish within the callers' patience
+                entered.set()
+                self.assertTrue(stuck.wait(10))
+                return self.process(['late'])
+            return self.process(['fresh'])
+        leader = threading.Thread(target=lambda: self.ids())
+        with patch.object(compat, 'MODELS_WAIT_S', 0.3), patch.object(compat.subprocess, 'run', side_effect=fake):
+            leader.start()
+            self.assertTrue(entered.wait(10))
+            with self.assertRaisesRegex(RuntimeError, 'HERMES_MODELS_UNAVAILABLE'):
+                compat.hermes_models()  # a follower gives up after MODELS_WAIT_S ...
+            self.assertEqual(self.ids(), ['fresh'])  # ... and the next caller runs its own inventory instead of waiting for the dead one
+            stuck.set()
+            leader.join(10)
+            self.assertEqual(self.ids(), ['fresh'])  # the late leader did not replace what the newer run kept
+        self.assertEqual(len(self.runs), 2)

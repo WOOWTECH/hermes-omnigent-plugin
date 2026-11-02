@@ -130,6 +130,25 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(calls.count('omnigent'), 1)  # a status poll does not wait the full probe time on every call
         self.assertEqual(calls.count('hermes'), 1)
 
+    def test_a_fresh_discovery_ignores_a_remembered_timeout(self):
+        """Right after an installer ran, a timeout remembered from before it says nothing about the new binary."""
+        calls = []
+
+        def probe(command, **kwargs):
+            name = Path(command[0]).name
+            calls.append(name)
+            if name == 'omnigent' and calls.count('omnigent') == 1:
+                raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+            return SimpleNamespace(returncode=0, stdout='tool 1.2.3', stderr='')
+        with self.fake_binaries(probe) as runtime:
+            self.assertFalse(runtime.discover()['omnigent']['available'])
+            self.assertFalse(runtime.discover()['omnigent']['available'])  # remembered
+            self.assertEqual(calls.count('omnigent'), 1)
+            self.assertTrue(runtime.discover(fresh=True)['omnigent']['available'])  # asked again
+            self.assertEqual(calls.count('omnigent'), 2)
+            self.assertTrue(runtime.discover()['omnigent']['available'])  # and the good answer is what is remembered now
+            self.assertEqual(calls.count('omnigent'), 2)
+
     def test_native_yaml_reader_preserves_enabled_and_disabled_policy_without_pyyaml(self):
         import yaml
         runtime = Runtime(self.home)
