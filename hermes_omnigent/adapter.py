@@ -318,9 +318,7 @@ class Plugin:
             version_text = None
             if binary:
                 try:
-                    # Only reached without an engine inventory (the runtime always passes one). A probe that does not finish leaves the
-                    # version unknown; the engine stays installed.
-                    probe = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=15)
+                    probe = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=5)
                     match = re.search(r"\d+\.\d+\.\d+(?:[-.][\w]+)*", probe.stdout)
                     if probe.returncode == 0 and match:
                         version_text = match.group(0)

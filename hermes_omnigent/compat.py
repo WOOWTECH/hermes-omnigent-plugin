@@ -114,12 +114,12 @@ def native_gateway(action, home):
 # slow one, while Omnigent waits 5 s (before a session exists) or 15 s (the picker) for the answer. A complete answer is therefore
 # kept for a minute (and dropped as soon as Hermes' own configuration files change), and callers that arrive while a run is in
 # progress share it instead of each starting another Python process. Only an answer that models.py itself reports complete is kept:
-# an incomplete one (the endpoint did not list its models), a failure, and an answer from a models.py that reports nothing are
-# returned to the callers that waited for them but never kept, so the next call asks again.
+# an incomplete one (the endpoint did not list its models), a failure, and an answer from a models.py that reports nothing (an older
+# release) are returned to the callers that waited for them but never kept, so the next call asks again. The status travels inside
+# the list, so an older compat, which keeps only elements that have an id, reads a newer models.py without noticing it.
 MODELS_TTL_S = 60.0
 MODELS_WAIT_S = 60.0  # how long a caller waits for a run it shares; a run itself is bounded by the 45 s process timeout
-MODELS_COMPLETE_MARKER = 'HERMES_MODELS_COMPLETE'  # models.py prints one of these two lines on stderr
-MODELS_DEGRADED_MARKER = 'HERMES_MODELS_DEGRADED'
+MODELS_STATUS_KEY = 'inventory'  # the last element of models.py's list: {'inventory': 'complete' | 'degraded'}, not a model
 MODEL_OPTIONS_FAILED = 'hermes_native_model_options_failed'  # the code of the 503 the SDK's own catalog routes use too
 _models_clock = time.monotonic
 _models_lock = threading.Lock()
@@ -162,19 +162,18 @@ def _run_hermes_models():
     env.pop('PYTHONPATH', None)
     if env.get('HERMES_OMNIGENT_PYTHONPATH'):
         env['PYTHONPATH'] = env['HERMES_OMNIGENT_PYTHONPATH']
-    process = subprocess.run([python, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             text=True, errors='replace', timeout=45, env=env)
+    process = subprocess.run([python, str(script)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             text=True, timeout=45, env=env)
     if process.returncode or len(process.stdout) > 262144:
         raise RuntimeError('HERMES_MODELS_UNAVAILABLE')
     rows = json.loads(process.stdout)
     if not isinstance(rows, list):
         raise RuntimeError('HERMES_MODELS_UNAVAILABLE')
+    status = next((row[MODELS_STATUS_KEY] for row in rows if isinstance(row, dict) and 'id' not in row and MODELS_STATUS_KEY in row), None)
     rows = [row for row in rows if isinstance(row, dict) and isinstance(row.get('id'), str)
             and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9/_.:\-]{0,200}', row['id'])]
-    # stderr is read for these two fixed lines only; nothing else from it is kept or logged.
-    lines = (getattr(process, 'stderr', None) or '').splitlines()
-    complete = MODELS_COMPLETE_MARKER in lines and MODELS_DEGRADED_MARKER not in lines
-    if MODELS_DEGRADED_MARKER in lines:
+    complete = status == 'complete'
+    if status == 'degraded':
         _logger.warning('The Hermes model inventory is incomplete: the active endpoint did not list its models. '
                         'The list is not kept; the next call asks again.')
     elif not complete:

@@ -299,9 +299,12 @@ class ModelInventoryCacheTests(unittest.TestCase):
         self.addCleanup(compat.reset_hermes_models)
 
     @staticmethod
-    def process(ids, *, stderr='HERMES_MODELS_COMPLETE\n', returncode=0):
+    def process(ids, *, status='complete', returncode=0):
+        """What models.py prints: the models, then (a newer script) one record saying whether the list is complete."""
         rows = [{'id': name, 'displayName': name, 'model': name, 'isDefault': index == 0} for index, name in enumerate(ids)]
-        return types.SimpleNamespace(returncode=returncode, stdout=json.dumps(rows), stderr=stderr)
+        if status is not None:
+            rows.append({'inventory': status})
+        return types.SimpleNamespace(returncode=returncode, stdout=json.dumps(rows))
 
     def fake_run(self, *args, **kwargs):
         self.runs.append(args)
@@ -334,7 +337,7 @@ class ModelInventoryCacheTests(unittest.TestCase):
         self.assertEqual(len(self.runs), 3)
 
     def test_an_incomplete_answer_is_returned_but_never_kept(self):
-        self.answers = [self.process(['only/configured'], stderr='HERMES_MODELS_DEGRADED\n'), self.process(['a', 'b'])]
+        self.answers = [self.process(['only/configured'], status='degraded'), self.process(['a', 'b'])]
         with self.assertLogs('hermes_omnigent.compat', 'WARNING') as logged:
             self.assertEqual(self.ids(), ['only/configured'])
         self.assertNotIn('only/configured', ' '.join(logged.output))
@@ -342,22 +345,28 @@ class ModelInventoryCacheTests(unittest.TestCase):
         self.assertEqual(self.ids(), ['a', 'b'])  # complete now, so kept
         self.assertEqual(len(self.runs), 2)
 
-    def test_other_stderr_text_neither_proves_nor_spoils_completeness(self):
-        noise = 'UserWarning: unrelated\nHERMES_MODELS_DEGRADED_BUT_NOT_THE_LINE\n'
-        self.answers = [self.process(['m'], stderr=noise + 'HERMES_MODELS_COMPLETE\n')]
-        self.ids()
-        self.ids()
-        self.assertEqual(len(self.runs), 1)  # the real status line among the noise counts
-        compat.reset_hermes_models()
-        self.runs.clear()
-        self.answers = [self.process(['m'], stderr=noise)]
-        self.ids()
-        self.ids()
-        self.assertEqual(len(self.runs), 2)  # noise alone is not proof
+    def test_the_status_record_is_never_handed_to_callers_as_a_model(self):
+        rows = compat.hermes_models()
+        self.assertEqual([row['id'] for row in rows], ['real/default'])
+        self.assertTrue(all('inventory' not in row for row in rows))
 
-    def test_an_answer_from_a_script_without_a_status_line_is_never_kept(self):
-        """models.py of an older plugin release (a rollback while this compat is still loaded) prints no status line."""
-        self.answers = [self.process(['m'], stderr='')]
+    def test_only_a_record_without_an_id_counts_as_the_status(self):
+        # a model row that happens to carry the key, or a status that is not exactly 'complete', proves nothing
+        for stdout in (json.dumps([{'id': 'm', 'inventory': 'complete'}]),
+                       json.dumps([{'id': 'm'}, {'inventory': 'Complete'}]),
+                       json.dumps([{'id': 'm'}, {'inventory': True}]),
+                       json.dumps([{'id': 'm'}, 'complete'])):
+            with self.subTest(stdout=stdout):
+                compat.reset_hermes_models()
+                self.runs.clear()
+                self.answers = [types.SimpleNamespace(returncode=0, stdout=stdout)]
+                self.ids()
+                self.ids()
+                self.assertEqual(len(self.runs), 2)
+
+    def test_an_answer_from_a_script_without_a_status_record_is_never_kept(self):
+        """models.py of an older plugin release (a rollback while this compat is still loaded) reports nothing."""
+        self.answers = [self.process(['m'], status=None)]
         self.assertEqual(self.ids(), ['m'])
         self.assertEqual(self.ids(), ['m'])
         self.assertEqual(len(self.runs), 2)
