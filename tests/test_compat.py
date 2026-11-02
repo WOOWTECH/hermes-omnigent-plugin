@@ -2,11 +2,13 @@ import ast
 import asyncio
 import importlib.util
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
 import sqlite3
 import tempfile
+import threading
 import types
 import unittest
 from unittest.mock import patch
@@ -122,14 +124,15 @@ class CompatibilityTests(unittest.TestCase):
             self.assertIsNone(sandbox(env, None))
             self.assertEqual(sandbox(env, inherited), 'the-agents-own-sandbox')
 
-    def test_the_session_model_route_lists_hermes_models_and_leaves_other_harnesses_alone(self):
+    def route_namespace(self):
         tree = ast.parse(self.patched('runner/model_option_routes.py'))
         function = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == 'get_session_model_options')
         class App:  # the route decorators of the real FastAPI app; here they return the function unchanged
             def __getattr__(self, name):
                 return lambda *args, **kwargs: (lambda function: function)
 
-        namespace = {'asyncio': asyncio, 'app': App(), 'JSONResponse': lambda content, status_code=200: ('json', status_code, content)}
+        namespace = {'asyncio': asyncio, 'app': App(), 'JSONResponse': lambda content, status_code=200: ('json', status_code, content),
+                     '_logger': logging.getLogger('test-model-route')}
         harness = {'name': 'hermes-native'}
         namespace['_session_harness_name'] = lambda session_id: harness['name']
 
@@ -138,10 +141,26 @@ class CompatibilityTests(unittest.TestCase):
 
         namespace['get_session_claude_model_options'] = claude
         exec(compile(ast.Module(body=[function], type_ignores=[]), '<patched-model-route>', 'exec'), namespace)
+        return namespace, harness
+
+    def test_the_session_model_route_lists_hermes_models_and_leaves_other_harnesses_alone(self):
+        namespace, harness = self.route_namespace()
         with patch('hermes_omnigent.compat.hermes_models', return_value=[{'id': 'sol'}]):
             self.assertEqual(asyncio.run(namespace['get_session_model_options']('s1')), ('json', 200, {'models': [{'id': 'sol'}]}))
             harness['name'] = 'claude-native'
             self.assertEqual(asyncio.run(namespace['get_session_model_options']('s2')), ('claude', 's2'))
+
+    def test_the_session_model_route_reports_an_unavailable_inventory_as_a_retryable_503(self):
+        """Like the SDK's own catalog routes: 503 and a stable code, never an unhandled exception (a 500) or a raw diagnostic."""
+        namespace, _ = self.route_namespace()
+        for failure in (RuntimeError('HERMES_MODELS_UNAVAILABLE secret provider diagnostic'), ValueError('bad json'),
+                        __import__('subprocess').TimeoutExpired('python', 45)):
+            with self.subTest(failure=type(failure).__name__), patch('hermes_omnigent.compat.hermes_models', side_effect=failure), \
+                    self.assertLogs('test-model-route', 'WARNING'):
+                result = asyncio.run(namespace['get_session_model_options']('s1'))
+            self.assertEqual(result[:2], ('json', 503))
+            self.assertEqual(result[2]['error'], 'hermes_native_model_options_failed')
+            self.assertNotIn('secret', json.dumps(result[2]))
 
     def test_unknown_upstream_shape_fails_before_changing_any_file(self):
         file = self.sdk / 'runner/app.py'
@@ -252,6 +271,153 @@ class CompatibilityTests(unittest.TestCase):
                 compat.stop_hermes_terminal({'socket_path': '/missing/socket', 'tmux_target': 'own'})
 
 
+class ModelInventoryCacheTests(unittest.TestCase):
+    """One inventory run costs a Python start, Hermes' imports and an endpoint probe, and Omnigent waits only 5 s (before a session
+    exists) or 15 s (the picker) for it. A complete answer is kept for a minute, callers that arrive during a run share it, and an
+    incomplete answer or a failure is never kept."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.profile = Path(self.temp.name)
+        (self.profile / 'config.yaml').write_text('model: {default: a}\n')
+        self.clock = types.SimpleNamespace(now=1000.0)
+        self.runs = []  # one entry per Python process the inventory started
+        self.answers = [self.process(['real/default'])]
+        for manager in (patch.dict('os.environ', {'HERMES_OMNIGENT_PYTHON': '/sdk/python', 'HERMES_OMNIGENT_PROFILE': str(self.profile)}),
+                        patch.object(compat, '_models_clock', lambda: self.clock.now),
+                        patch.object(compat.subprocess, 'run', side_effect=self.fake_run)):
+            manager.start()
+            self.addCleanup(manager.stop)
+        compat.reset_hermes_models()
+        self.addCleanup(compat.reset_hermes_models)
+
+    @staticmethod
+    def process(ids, *, stderr='', returncode=0):
+        rows = [{'id': name, 'displayName': name, 'model': name, 'isDefault': index == 0} for index, name in enumerate(ids)]
+        return types.SimpleNamespace(returncode=returncode, stdout=json.dumps(rows), stderr=stderr)
+
+    def fake_run(self, *args, **kwargs):
+        self.runs.append(args)
+        answer = self.answers[min(len(self.runs), len(self.answers)) - 1]
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    def ids(self):
+        return [row['id'] for row in compat.hermes_models()]
+
+    def test_a_complete_answer_is_served_from_memory_until_it_expires(self):
+        self.assertEqual(self.ids(), ['real/default'])
+        self.clock.now += 59
+        self.assertEqual(self.ids(), ['real/default'])
+        self.assertEqual(len(self.runs), 1)
+        self.clock.now += 2
+        self.ids()
+        self.assertEqual(len(self.runs), 2)
+
+    def test_a_change_to_hermes_configuration_is_seen_at_once(self):
+        self.ids()
+        (self.profile / 'config.yaml').write_text('model: {default: another-model-with-a-longer-name}\n')
+        self.ids()
+        self.assertEqual(len(self.runs), 2)
+        (self.profile / '.env').write_text('KEY=value\n')  # a file appearing counts as a change too
+        self.ids()
+        self.assertEqual(len(self.runs), 3)
+        self.ids()
+        self.assertEqual(len(self.runs), 3)
+
+    def test_an_incomplete_answer_is_returned_but_never_kept(self):
+        self.answers = [self.process(['only/configured'], stderr='HERMES_MODELS_DEGRADED\n'), self.process(['a', 'b'])]
+        with self.assertLogs('hermes_omnigent.compat', 'WARNING') as logged:
+            self.assertEqual(self.ids(), ['only/configured'])
+        self.assertNotIn('only/configured', ' '.join(logged.output))
+        self.assertEqual(self.ids(), ['a', 'b'])  # asked again at once
+        self.assertEqual(self.ids(), ['a', 'b'])  # complete now, so kept
+        self.assertEqual(len(self.runs), 2)
+
+    def test_other_stderr_text_is_not_an_incomplete_answer(self):
+        self.answers = [self.process(['m'], stderr='UserWarning: unrelated\nHERMES_MODELS_DEGRADED_BUT_NOT_THE_MARKER\n')]
+        self.ids()
+        self.ids()
+        self.assertEqual(len(self.runs), 1)
+
+    def test_a_failure_is_not_kept_and_the_next_call_asks_again(self):
+        self.answers = [self.process([], returncode=1), compat.subprocess.TimeoutExpired('python', 45), self.process(['m'])]
+        with self.assertRaisesRegex(RuntimeError, 'HERMES_MODELS_UNAVAILABLE'):
+            compat.hermes_models()
+        with self.assertRaises(compat.subprocess.TimeoutExpired):
+            compat.hermes_models()
+        self.assertEqual(self.ids(), ['m'])
+        self.assertEqual(len(self.runs), 3)
+
+    def hold_the_run(self, outcome):
+        """Four callers; the first one's run does not finish until the other three are certainly waiting for it."""
+        import concurrent.futures
+        entered, arrived = threading.Event(), threading.Semaphore(0)
+        waiting_result = concurrent.futures.Future.result
+
+        def counted_result(future, timeout=None):
+            arrived.release()
+            return waiting_result(future, timeout)
+
+        def slow(*args, **kwargs):
+            self.runs.append(args)
+            entered.set()
+            for _ in range(3):
+                self.assertTrue(arrived.acquire(timeout=10))
+            return outcome
+        results = []
+
+        def call():
+            try:
+                results.append(self.ids())
+            except BaseException as error:  # noqa: BLE001 - the test inspects what each caller saw
+                results.append(error)
+        with patch.object(compat.subprocess, 'run', side_effect=slow), \
+                patch.object(concurrent.futures.Future, 'result', counted_result):
+            threads = [threading.Thread(target=call) for _ in range(4)]
+            threads[0].start()
+            self.assertTrue(entered.wait(10))
+            for thread in threads[1:]:
+                thread.start()
+            for thread in threads:
+                thread.join(15)
+        return results
+
+    def test_callers_that_arrive_during_a_run_share_it(self):
+        results = self.hold_the_run(self.process(['shared']))
+        self.assertEqual(results, [['shared']] * 4)
+        self.assertEqual(len(self.runs), 1)
+
+    def test_a_failure_reaches_every_caller_that_shared_the_run(self):
+        results = self.hold_the_run(self.process([], returncode=1))
+        self.assertEqual(len(results), 4)
+        self.assertTrue(all(isinstance(r, RuntimeError) and 'HERMES_MODELS_UNAVAILABLE' in str(r) for r in results), results)
+        self.assertEqual(len(self.runs), 1)
+
+    def test_a_returned_list_can_be_changed_without_changing_what_is_kept(self):
+        first = compat.hermes_models()
+        first[0]['id'] = 'mutated'
+        first.clear()
+        self.assertEqual(self.ids(), ['real/default'])
+
+    def test_without_a_profile_there_is_nothing_to_key_an_answer_on_so_nothing_is_kept(self):
+        with patch.dict('os.environ'):
+            os.environ.pop('HERMES_OMNIGENT_PROFILE')
+            self.ids()
+            self.ids()
+        self.assertEqual(len(self.runs), 2)
+
+    def test_a_forked_child_does_not_inherit_a_lock_that_another_thread_held(self):
+        self.assertTrue(compat._models_lock.acquire(timeout=1))  # as if another thread held it when the process forked
+        self.addCleanup(lambda: compat._models_lock.release() if compat._models_lock.locked() else None)
+        compat._forget_models_after_fork()
+        self.assertTrue(compat._models_lock.acquire(timeout=1))
+        compat._models_lock.release()
+        self.assertEqual(self.ids(), ['real/default'])
+
+
 if __name__ == '__main__':
     unittest.main()
 
@@ -323,6 +489,17 @@ class ModelResetTests(unittest.IsolatedAsyncioTestCase):
             result = await compat.change_model('owned-session', None)
             self.assertEqual(result.status_code, 204)
             change.assert_called_once_with(Path('/owned'), 'default-model')
+
+    async def test_an_unavailable_inventory_is_a_503_with_a_stable_code_and_changes_nothing(self):
+        for requested in ('model-a', None):
+            with self.subTest(requested=requested), \
+                    patch.object(compat, 'hermes_models', side_effect=RuntimeError('HERMES_MODELS_UNAVAILABLE secret diagnostic')), \
+                    patch.object(compat, 'inject_hermes_model') as change, self.assertLogs('hermes_omnigent.compat', 'WARNING'):
+                result = await compat.change_model('owned-session', requested)
+            self.assertEqual(result.status_code, 503)
+            self.assertEqual(json.loads(result.body)['error'], 'hermes_native_model_options_failed')
+            self.assertNotIn('secret', result.body.decode())
+            change.assert_not_called()
 
     async def test_reset_without_known_default_fails_without_mutation(self):
         with patch.object(compat, 'hermes_models', return_value=[{'id': 'other'}]), \

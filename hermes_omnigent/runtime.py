@@ -25,6 +25,7 @@ SENTINEL = 'OMNIGENT_CONNECTION_OK'
 OMNIGENT_VERSION = '0.19.1'
 _cache = {}
 _cache_lock = threading.Lock()
+PROBE_TIMEOUT_S = 30  # --version of every binary discover() looks for
 
 def process_identity(pid):
     try:
@@ -214,8 +215,10 @@ class Runtime:
                 with _cache_lock:
                     cached = _cache.get(key)
                 if not cached or cached[0] < time.monotonic():
+                    # A Node or Python CLI on a slow host (an SD card) can need many seconds for --version, and a probe that
+                    # times out reads as "not installed": the installer then reinstalls Omnigent or fetches tmux again.
                     probe = subprocess.run([binary, '-V' if name == 'tmux' else '--version'],
-                                           capture_output=True, text=True, timeout=30 if name == 'hermes' else 8, env=env)
+                                           capture_output=True, text=True, timeout=PROBE_TIMEOUT_S, env=env)
                     match = re.search(r'(?<!\d)(\d+\.\d+(?:\.\d+)?[a-z]?)', probe.stdout + probe.stderr)
                     entry = {'available': probe.returncode == 0, 'path': binary,
                              'version': match.group(1) if match else None}
@@ -226,7 +229,14 @@ class Runtime:
                 else:
                     entry = dict(cached[1])
                 result[name] = entry
-            except (OSError, subprocess.TimeoutExpired):
+            except subprocess.TimeoutExpired:
+                # Says nothing certain about the binary: unavailable for now, but remembered for a moment so that every status
+                # poll does not wait the full probe time again.
+                entry = {'available': False, 'path': binary}
+                with _cache_lock:
+                    _cache[key] = (time.monotonic() + 15, entry)
+                result[name] = dict(entry)
+            except OSError:
                 result[name] = {'available': False, 'path': binary}
         return result
 
