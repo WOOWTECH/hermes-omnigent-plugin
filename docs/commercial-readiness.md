@@ -1,8 +1,17 @@
 # Hermes Omnigent 候選版驗收紀錄
 
-版本：v0.1.0-rc.18 候選版。驗收更新：2026-11-07 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
+版本：v0.1.0-rc.19 候選版。驗收更新：2026-11-07 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
 
 指定主站 Hermes 0.22.5／Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
+
+## rc.19 候選範圍：首次配對失敗後可更正伺服器
+
+帶上 2026-11-07 合併的 #21。私有 Omnigent 仍固定 0.20.0，相容層仍是 v22；這次不重裝已存在的 runtime，也不改動對話行為。
+
+- 實機發現：ws97 HAOS 上，首次配對到無法連線的伺服器後，因從未註冊 host，Disconnect 回 `MISSING_HOST_ID`，再改連正確伺服器卻回 `DISCONNECT_BEFORE_SERVER_CHANGE`。現在僅在私有 Omnigent 設定已記錄 `host_id` 時擋跨伺服器配對；設定檔無法讀取、無法解析或不是 mapping 時仍保守阻擋。已登入主機的保護維持。
+- 安裝期限：ws97 首次 `uv tool install` 曾花約 558 秒，原本 900 秒的期限改為 1800 秒。這只延長安裝等待上限，不改變安裝來源或版本。
+- 本機驗證：固定 Omnigent 0.20.0、Python 3.14 的 196 個單元測試通過；Dashboard 6 個測試通過。新增測試涵蓋失敗後改連、設定檔錯誤時拒絕改連、安裝呼叫取得 1800 秒期限。Hermes 0.22.5 `plugin_guard` 比對 rc.18 與 #21：兩邊皆 `safe`、38 筆發現，新增 0 筆。
+- 部署現況：發版 PR 準備時，測試台與正式台都仍是 rc.18（HEAD `29dcd4e`），ready 且已連線；ws97 的 rc.18 經 HA ingress／Supervisor 完成真實對話驗證，測後已移除外掛並恢復原狀。#21 的修正尚未在實體 HAOS 上重測；rc.19 的 PaaS 真實對話也須在發版後按測試台、正式台順序驗證。
 
 ## rc.18 發布範圍：新對話的第一則訊息不再遺失
 
