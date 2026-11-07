@@ -64,6 +64,70 @@ class CompatibilityTests(unittest.TestCase):
                 self.assertEqual(shared_user_skills({'model': 'm'}),
                                  {'model': 'm', 'skills': {'external_dirs': [str(Path(profile) / 'skills')]}})
 
+    def test_native_home_answers_the_first_run_metrics_offer(self):
+        from hermes_omnigent.compat import decline_shared_metrics
+        off = {'enabled': False, 'send': False, 'offer_version': 2}
+        self.assertEqual(decline_shared_metrics({'model': 'm'}), {'model': 'm', 'telemetry': {'shared_metrics': off}})
+        # Whatever else is there stays, and an opt-in is never carried into a session home.
+        self.assertEqual(decline_shared_metrics({'telemetry': {'other': 1, 'shared_metrics': {'enabled': True, 'send': True, 'x': 1}}}),
+                         {'telemetry': {'other': 1, 'shared_metrics': {**off, 'x': 1}}})
+        source = next(after for file, before, after in patches.make_edits(self.sdk)
+                      if str(file).endswith('hermes_native/bridge.py'))
+        self.assertIn('decline_shared_metrics(no_background_review(shared_user_skills(', source)
+
+    def settle(self, panes, timeout_s=30.0):
+        """Run settle_hermes_pane on a fake clock; panes is a fixed capture or a function of the time. Returns (captures used, seconds waited)."""
+        from hermes_omnigent.compat import settle_hermes_pane
+        clock = [0.0]
+        index = [0]
+        def capture():
+            value = panes(clock[0]) if callable(panes) else panes
+            index[0] += 1
+            return value
+        settle_hermes_pane(capture, timeout_s, 0.5, 3, clock=lambda: clock[0], sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+        return index[0], clock[0]
+
+    BANNER = 'Welcome to Hermes Agent!\n' + 'x' * 20 + '\n'
+    STATUS = BANNER + ' ☤ deepseek-v4.1-flash · ctx -- · [░░░░░░░░░░] -- · 6s · ⏲ 0s\n'
+
+    def test_a_blank_pane_is_not_ready(self):
+        # 10 s blank, then the banner, then the status bar from 14 s on: ready only once the bar has been still for three polls.
+        used, waited = self.settle(lambda t: '\n\n\n' if t < 10 else (self.BANNER if t < 14 else self.STATUS))
+        self.assertGreaterEqual(waited, 14.0)
+        self.assertLess(waited, 17.0)
+
+    def test_the_banner_without_a_status_bar_is_not_ready_yet(self):
+        # The MCP cold start: the banner has been drawn and still for seconds, but the input does not read keys.
+        used, waited = self.settle(lambda t: self.BANNER if t < 6 else self.STATUS)
+        self.assertGreaterEqual(waited, 6.0)
+
+    def test_a_screen_without_the_status_bar_is_ready_after_the_fallback(self):
+        used, waited = self.settle(self.BANNER)
+        self.assertGreaterEqual(waited, 20.0)
+        self.assertLess(waited, 23.0)
+
+    def test_a_ready_pane_returns_at_once(self):
+        used, waited = self.settle(self.STATUS)
+        self.assertEqual(used, 4)
+        self.assertLessEqual(waited, 1.5)
+
+    def test_a_busy_agent_is_not_waited_for_longer_than_before(self):
+        # The status bar is there but the pane keeps changing, as with a spinner: the SDK's 30 s timeout still applies.
+        used, waited = self.settle(lambda t: self.STATUS + f'tick {int(t * 2)}\n')
+        self.assertGreaterEqual(waited, 30.0)
+        self.assertLess(waited, 31.0)
+
+    def test_a_pane_that_never_draws_gives_up_after_the_start_wait(self):
+        used, waited = self.settle('\n\n\n')
+        self.assertGreaterEqual(waited, 90.0)
+        self.assertLess(waited, 91.0)
+
+    def test_the_bridge_asks_compat_whether_the_pane_is_ready(self):
+        source = next(after for file, before, after in patches.make_edits(self.sdk)
+                      if str(file).endswith('hermes_native/bridge.py'))
+        self.assertIn('settle_hermes_pane(lambda: _capture_pane(socket_path, tmux_target)', source)
+        compile(source, 'bridge.py', 'exec')
+
     def test_native_home_turns_background_review_off(self):
         from hermes_omnigent.compat import no_background_review
         self.assertEqual(no_background_review({'model': 'm'}),

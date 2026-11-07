@@ -1,7 +1,7 @@
 """Exact source transformations of the pinned Omnigent release in the plugin-owned venv."""
 from pathlib import Path
 
-MARKER = '# hermes-omnigent-plugin compatibility v21'
+MARKER = '# hermes-omnigent-plugin compatibility v22'
 
 
 def make_edits(sdk, source_overrides=None):
@@ -61,8 +61,8 @@ def make_edits(sdk, source_overrides=None):
         anchor = '    user_cfg = _load_user_hermes_config()\n'
         if source.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
-        source = source.replace(anchor, '    from hermes_omnigent.compat import no_background_review, shared_local_model_config, shared_user_skills\n'
-            '    user_cfg = no_background_review(shared_user_skills(shared_local_model_config(_load_user_hermes_config())))\n')
+        source = source.replace(anchor, '    from hermes_omnigent.compat import decline_shared_metrics, no_background_review, shared_local_model_config, shared_user_skills\n'
+            '    user_cfg = decline_shared_metrics(no_background_review(shared_user_skills(shared_local_model_config(_load_user_hermes_config()))))\n')
         anchor = '            "command": sys.executable,\n'
         if source.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
@@ -75,6 +75,16 @@ def make_edits(sdk, source_overrides=None):
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
         source = source.replace(anchor, '    from hermes_omnigent.compat import await_hermes_message\n'
                                 '    if await_hermes_message(db_path, baseline_id or 0, content, _DELIVERY_CONFIRM_TIMEOUT_S):\n')
+        anchor = 'def _settle_pane(socket_path: str, tmux_target: str, *, timeout_s: float) -> None:\n    """Best-effort wait until the Hermes input box is ready to receive a paste.\n\n    Hermes emits no fixed idle marker, so readiness is detected by the pane\n    settling: the captured contents stop changing for :data:`_SETTLE_STABLE_POLLS`\n    consecutive polls (no spinner churn, no streaming output). Falls through after\n    the timeout (mid-turn steering may never fully settle) rather than raising.\n    """\n    deadline = time.monotonic() + timeout_s\n    previous = _capture_pane(socket_path, tmux_target)\n    stable = 0\n    while time.monotonic() < deadline:\n        time.sleep(_POLL_INTERVAL_S)\n        current = _capture_pane(socket_path, tmux_target)\n        if current and current == previous:\n            stable += 1\n            if stable >= _SETTLE_STABLE_POLLS:\n                return\n        else:\n            stable = 0\n        previous = current\n'
+        if source.count(anchor) != 1:
+            raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
+        # The bridge calls a pane settled after three equal captures, and a pane that has drawn nothing yet is three
+        # equal blank captures. Even with the banner drawn, the input box does not read keys until the status bar shows,
+        # so the first paste was lost on every new session and only the retry got through. The decision lives in compat.
+        source = source.replace(anchor, '''def _settle_pane(socket_path: str, tmux_target: str, *, timeout_s: float) -> None:
+    from hermes_omnigent.compat import settle_hermes_pane
+    settle_hermes_pane(lambda: _capture_pane(socket_path, tmux_target), timeout_s, _POLL_INTERVAL_S, _SETTLE_STABLE_POLLS)
+''')
         anchor = '    info = _wait_for_tmux_info(bridge_dir, timeout_s=timeout_s)\n    _run_tmux(info["socket_path"], "kill-session", "-t", info["tmux_target"])\n'
         if source.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
