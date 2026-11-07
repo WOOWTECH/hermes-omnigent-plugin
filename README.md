@@ -30,6 +30,8 @@ CLI 安裝與上述驗收命令請使用執行 Hermes 的服務帳號。管理�
 - `/omnigent status`、`/omnigent catalog`、`/omnigent verify`、`/omnigent open`、`/omnigent setup`。
 - 模型工具 `omnigent_status`、`omnigent_catalog`、`omnigent_verify`、`omnigent_open`。工具沒有密碼／帳號欄位；登入只能透過配對面板。
 
+Hermes 在 Omnigent 對話中明確執行 `skill_manage(create)` 時，若 profile 未另設 `skills.create_dir`，新技能會寫入 profile 的 `skills/`，讓之後的新對話與 Hermes 原生對話都能讀取及調用。profile 已設定的 `skills.create_dir` 與其他 skills 政策會保留。這不會開啟自動背景技能生成；對話家目錄的技能異動帳本目前仍未合併到 profile 主帳本。
+
 密碼提交後即清空，既不寫入對話、插件狀態、瀏覽器 storage，也不在 API 驗證錯誤裡回顯。Omnigent 官方 token store 放在此插件的私有資料目錄。
 
 ## 執行環境與依賴
