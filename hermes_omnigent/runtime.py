@@ -26,6 +26,8 @@ OMNIGENT_VERSION = '0.20.0'
 _cache = {}
 _cache_lock = threading.Lock()
 PROBE_TIMEOUT_S = 30  # --version of every binary discover() looks for
+# `uv tool install omnigent`. A first install on the ws97 HAOS VM took 558 s on 2026-11-07; slower hosts need the margin.
+RUNTIME_INSTALL_TIMEOUT_S = 1800
 
 def process_identity(pid):
     try:
@@ -114,6 +116,31 @@ class Runtime:
 
     def state(self):
         return read(self.root / 'state.json', {'phase': 'needs-login', 'loginConfirmed': False})
+
+    def resident_host(self):
+        """Whether the private Omnigent config names a registered host, which only a successful login creates.
+
+        A config that cannot be read or parsed counts as a host, so the server-change guard stays closed when in doubt."""
+        try:
+            text = (self.omni / 'config.yaml').read_text()
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return True
+        try:
+            import hermes_yaml as yaml
+        except ModuleNotFoundError as error:
+            if error.name != 'hermes_yaml':
+                raise
+            import yaml
+        try:
+            config = yaml.safe_load(text) or {}
+        except (ValueError, yaml.YAMLError):
+            return True
+        if not isinstance(config, dict):
+            return True
+        host = config.get('host')
+        return isinstance(host, dict) and bool(host.get('host_id'))
 
     def require_profile_user(self):
         # Administrative kubectl/SSH shells can be root while Hermes itself
@@ -435,7 +462,7 @@ class Runtime:
                    UV_CACHE_DIR=str(self.root / 'uv/cache'), UV_PYTHON_INSTALL_DIR=str(self.root / 'python'))
         python = sys.executable if sys.version_info >= (3, 12) else '3.12'
         result = subprocess.run([uv, 'tool', 'install', '--python', python, *(['--reinstall'] if private else []), f'omnigent=={OMNIGENT_VERSION}'],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900, env=env)
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=RUNTIME_INSTALL_TIMEOUT_S, env=env)
         if result.returncode:
             raise Failure('OMNIGENT_INSTALL_FAILED')
         deps = self.discover(fresh=True)
@@ -493,9 +520,11 @@ class Runtime:
         server = normalize_server(server)
         if not isinstance(username, str) or not username.strip() or not isinstance(password, str) or not password:
             raise Failure('FRESH_LOGIN_REQUIRED')
-        if previous_server and previous_server != server:
+        if previous_server and previous_server != server and self.resident_host():
             # Keep the original identity recoverable; do not rewrite a resident
-            # host's config while it still points at a different server.
+            # host's config while it still points at a different server. A pairing
+            # that never logged in left no host behind, and Disconnect cannot clear
+            # it (there is no host to take offline), so it may move to another server.
             raise Failure('DISCONNECT_BEFORE_SERVER_CHANGE')
         self.save(server=server)
         self.install()

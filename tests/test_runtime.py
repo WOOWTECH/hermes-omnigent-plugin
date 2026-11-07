@@ -31,7 +31,13 @@ class RuntimeTests(unittest.TestCase):
         def call(request):
             self.calls.append(request)
             if request['action'] == 'connect':
-                return {'ok': False, 'error': {'code': 'NEEDS_LOGIN'}} if self.fail_login else {'ok': True, 'data': {}}
+                if self.fail_login:
+                    return {'ok': False, 'error': {'code': 'NEEDS_LOGIN'}}
+                # A successful login registers the host in the private Omnigent config, as the SDK does.
+                self.runtime.omni.mkdir(parents=True, exist_ok=True)
+                (self.runtime.omni / 'config.yaml').write_text(
+                    'server: %s\nhost:\n  host_id: own-host\n  name: own\n' % request.get('server'))
+                return {'ok': True, 'data': {}}
             if request['action'] in ['status', 'catalog']:
                 return {'ok': True, 'data': {'host': {'id': 'own-host', 'connected': self.online},
                         'engines': {name: {'ready': self.ready, 'agentId': 'own-module', 'models': [{'id': 'real-model'}]} for name in self.installed}}}
@@ -350,6 +356,48 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(self.runtime.state()['loginConfirmed'])
         self.runtime.disconnect()
         self.assertIsNone(self.runtime.state()['server'])
+
+    def test_a_pairing_that_never_logged_in_can_move_to_another_server(self):
+        """A first pairing against a mistyped or unreachable server leaves no host behind, and Disconnect cannot clear it
+        (MISSING_HOST_ID), so the panel must accept the right server. Found on the ws97 HAOS on 2026-11-07."""
+        self.fail_login = True
+        with self.assertRaises(Failure):
+            self.runtime.initialize('https://mistyped.example', 'account', 'password')
+        self.assertEqual(self.runtime.state()['server'], 'https://mistyped.example')
+        self.assertFalse(self.runtime.resident_host())
+        self.fail_login = False
+        self.assertTrue(self.pair()['ok'])
+        self.assertEqual(self.runtime.state()['server'], 'https://server.example')
+        self.assertTrue(self.runtime.state()['loginConfirmed'])
+
+    def test_an_unreadable_omnigent_config_keeps_the_server_change_guard_closed(self):
+        self.pair()
+        for broken in ('host: [never closed\n', '- a list, not a mapping\n'):
+            (self.runtime.omni / 'config.yaml').write_text(broken)
+            self.assertTrue(self.runtime.resident_host())
+            with self.assertRaises(Failure) as error:
+                self.runtime.initialize('https://another.example', 'account', 'password')
+            self.assertEqual(error.exception.code, 'DISCONNECT_BEFORE_SERVER_CHANGE')
+            self.assertEqual(self.runtime.state()['server'], 'https://server.example')
+
+    def test_the_runtime_install_allows_thirty_minutes(self):
+        """The first `uv tool install omnigent` took 558 s on the ws97 HAOS VM; 900 s left too little margin for slower hosts."""
+        from hermes_omnigent.runtime import RUNTIME_INSTALL_TIMEOUT_S
+        runs = []
+        def run(command, **kwargs):
+            runs.append((list(command), kwargs))
+            return SimpleNamespace(returncode=0)
+        def find():
+            return {name: {'available': True, 'path': '/image/bin/' + name, 'version': '1.0.0'}
+                    for name in ['hermes', 'omnigent', 'uv', 'tmux', 'bwrap']}
+        runtime = Runtime(self.home, find=find, call=lambda request: {'ok': True, 'data': {}}, active=lambda: True)
+        with patch('hermes_omnigent.runtime.subprocess.run', side_effect=run), \
+                patch.object(runtime, 'check_sandbox'), patch.object(runtime, 'install_compatibility') as compat:
+            runtime.install()
+        installs = [kwargs['timeout'] for command, kwargs in runs if command[1:3] == ['tool', 'install']]
+        self.assertEqual(installs, [RUNTIME_INSTALL_TIMEOUT_S])
+        self.assertGreaterEqual(RUNTIME_INSTALL_TIMEOUT_S, 1800)
+        compat.assert_called_once()
 
     def test_restore_restarts_approved_host_without_sending_model_prompt(self):
         self.pair()
