@@ -263,6 +263,64 @@ def shared_user_skills(config):
     return {**config, 'skills': {'external_dirs': [str(Path(profile) / 'skills')]}}
 
 
+# The status bar the Hermes TUI draws under the input box, such as " ☤ deepseek-v4.1-flash · ctx -- · [░░░░░░░░░░] -- · 6s".
+HERMES_STATUS_BAR = re.compile(r'^\s*☤ \S.* · ', re.M)
+HERMES_START_WAIT_SECONDS = 90.0
+HERMES_DRAWN_FALLBACK_SECONDS = 20.0
+
+
+def settle_hermes_pane(capture, timeout_s, poll_s, stable_polls, *, clock=time.monotonic, sleep=time.sleep):
+    """Wait until the Hermes TUI can take the first keys, then return; fall through at the deadline, never raise.
+
+    The SDK's own check called a pane settled after a few equal captures, which a blank pane satisfies, and
+    the TUI only reads keys once its status bar shows. Pasted earlier, the text is lost. So until the status
+    bar has been seen the wait is longer (HERMES_START_WAIT_SECONDS, a cold start on a slow host), and a pane
+    that drew something else and stays still for HERMES_DRAWN_FALLBACK_SECONDS counts as ready too, in case a
+    skin or a later Hermes draws no such bar. Once the status bar is seen, or when nothing can be captured at all,
+    the SDK's timeout applies again, so steering a busy agent or a dead pane waits no longer than before."""
+    start = clock()
+    deadline = start + timeout_s
+    patient = start + max(timeout_s, HERMES_START_WAIT_SECONDS)
+    previous = capture()
+    seen_bar = bool(HERMES_STATUS_BAR.search(previous))
+    # A blank pane captures as newlines; an empty string means the capture failed (no tmux server, no pane). That
+    # is not a slow start, so it gets no extra wait and the caller's own error comes as soon as before.
+    captured = bool(previous)
+    drawn_at = start if previous.strip() else None
+    stable = 0
+    while clock() < (patient if captured and not seen_bar else deadline):
+        sleep(poll_s)
+        current = capture()
+        captured = captured or bool(current)
+        if HERMES_STATUS_BAR.search(current):
+            seen_bar = True
+        if current.strip():
+            if drawn_at is None:
+                drawn_at = clock()
+            if current == previous:
+                stable += 1
+                if stable >= stable_polls and (seen_bar or clock() - drawn_at >= HERMES_DRAWN_FALLBACK_SECONDS):
+                    return
+            else:
+                stable = 0
+        else:
+            stable = 0
+        previous = current
+
+
+def decline_shared_metrics(config):
+    """Pre-answer the terminal's first-run "Help improve Hermes?" offer with its default, "No thanks".
+
+    A new session home has never answered it, so every new Hermes TUI asks before the chat opens, and the
+    first message pasted by the bridge answers it instead of reaching the chat. Writing the answer the TUI
+    would have saved is the same outcome without the dialog. offer_version is the one of Hermes 0.22.5
+    (hermes_cli/observability/shared_metrics_consent.py); another value is asked again, which only brings
+    back the retry the bridge already has."""
+    telemetry = config.get('telemetry') if isinstance(config.get('telemetry'), dict) else {}
+    shared = telemetry.get('shared_metrics') if isinstance(telemetry.get('shared_metrics'), dict) else {}
+    return {**config, 'telemetry': {**telemetry, 'shared_metrics': {**shared, 'enabled': False, 'send': False, 'offer_version': 2}}}
+
+
 def no_background_review(config):
     """Keep session review forks off: the profile's skills are writable from here, and their ledger stays in the session home."""
     auxiliary = config.get('auxiliary') if isinstance(config.get('auxiliary'), dict) else {}
