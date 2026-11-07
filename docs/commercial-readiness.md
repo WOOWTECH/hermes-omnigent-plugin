@@ -1,8 +1,14 @@
 # Hermes Omnigent 候選版驗收紀錄
 
-版本：v0.1.0-rc.19 候選版。驗收更新：2026-11-07 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
+版本：v0.1.0-rc.20 候選版。驗收更新：2026-11-07 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
 
 指定主站 Hermes 0.22.5／Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
+
+## rc.20 候選範圍：Omnigent 對話建立的技能可供後續對話調用
+
+納入 #23。原本 rc.17 只設定 `skills.external_dirs`，因此對話可以讀 profile 的既有 skills，但 `skill_manage(create)` 仍把新 skill 寫到該對話獨立的 `HERMES_HOME/skills`，其他對話看不到。現在在 profile 未另設 `skills.create_dir` 且 `skills/` 不是符號連結時，把 `skills.create_dir` 指到 profile 的 skills 目錄；其他 skills 政策及明確指定的建立目錄保留。不啟用背景審查，也不改配對、模型或伺服器版本。相容補丁世代維持 v22，因既有補丁會在啟動時匯入這個 helper。
+
+隔離驗證：使用 Hermes 0.22.5 的實際 `_create_skill` 從一個獨立對話目錄建立 skill，再從第二個獨立對話目錄以 `skill_view` 讀到同一標記，profile 的 `skills/` 也有檔案。單元測試涵蓋原本技能目錄、既有政策、使用者指定的 `create_dir` 與符號連結情況。尚未在 PaaS 租戶及 HAOS 實機完成真實模型建立／調用。技能異動帳本仍寫在對話家目錄，沒有合併到 profile 主帳本。
 
 ## rc.19 候選範圍：首次配對失敗後可更正伺服器
 
