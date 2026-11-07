@@ -263,6 +263,12 @@ def shared_user_skills(config):
     return {**config, 'skills': {'external_dirs': [str(Path(profile) / 'skills')]}}
 
 
+def no_background_review(config):
+    """Keep session review forks off: the profile's skills are writable from here, and their ledger stays in the session home."""
+    auxiliary = config.get('auxiliary') if isinstance(config.get('auxiliary'), dict) else {}
+    return {**config, 'auxiliary': {**auxiliary, 'background_review': {'enabled': False}}}
+
+
 def selected_hermes_model(home, session_id):
     """Read the selected model, without exporting private native policy fields."""
     connection = sqlite3.connect(f'file:{Path(home) / "state.db"}?mode=ro', uri=True, timeout=1)

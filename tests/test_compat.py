@@ -64,6 +64,16 @@ class CompatibilityTests(unittest.TestCase):
                 self.assertEqual(shared_user_skills({'model': 'm'}),
                                  {'model': 'm', 'skills': {'external_dirs': [str(Path(profile) / 'skills')]}})
 
+    def test_native_home_turns_background_review_off(self):
+        from hermes_omnigent.compat import no_background_review
+        self.assertEqual(no_background_review({'model': 'm'}),
+                         {'model': 'm', 'auxiliary': {'background_review': {'enabled': False}}})
+        self.assertEqual(no_background_review({'auxiliary': {'vision': {'model': 'v'}, 'background_review': {'enabled': True}}}),
+                         {'auxiliary': {'vision': {'model': 'v'}, 'background_review': {'enabled': False}}})
+        source = next(after for file, before, after in patches.make_edits(self.sdk)
+                      if str(file).endswith('hermes_native/bridge.py'))
+        self.assertIn('no_background_review(shared_user_skills(', source)
+
     def test_readiness_probes_hermes_aliases_once_and_allows_cold_start(self):
         source = next(after for file, before, after in patches.make_edits(self.sdk)
                       if str(file).endswith('onboarding/harness_readiness.py'))

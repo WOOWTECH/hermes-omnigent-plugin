@@ -1,7 +1,7 @@
 """Exact source transformations of the pinned Omnigent release in the plugin-owned venv."""
 from pathlib import Path
 
-MARKER = '# hermes-omnigent-plugin compatibility v20'
+MARKER = '# hermes-omnigent-plugin compatibility v21'
 
 
 def make_edits(sdk, source_overrides=None):
@@ -61,8 +61,8 @@ def make_edits(sdk, source_overrides=None):
         anchor = '    user_cfg = _load_user_hermes_config()\n'
         if source.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
-        source = source.replace(anchor, '    from hermes_omnigent.compat import shared_local_model_config, shared_user_skills\n'
-            '    user_cfg = shared_user_skills(shared_local_model_config(_load_user_hermes_config()))\n')
+        source = source.replace(anchor, '    from hermes_omnigent.compat import no_background_review, shared_local_model_config, shared_user_skills\n'
+            '    user_cfg = no_background_review(shared_user_skills(shared_local_model_config(_load_user_hermes_config())))\n')
         anchor = '            "command": sys.executable,\n'
         if source.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
