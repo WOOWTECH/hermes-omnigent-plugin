@@ -62,7 +62,22 @@ class CompatibilityTests(unittest.TestCase):
                 self.assertEqual(shared_user_skills({'model': 'm'}), {'model': 'm'})
                 (Path(profile) / 'skills').mkdir()
                 self.assertEqual(shared_user_skills({'model': 'm'}),
-                                 {'model': 'm', 'skills': {'external_dirs': [str(Path(profile) / 'skills')]}})
+                                 {'model': 'm', 'skills': {
+                                     'external_dirs': [str(Path(profile) / 'skills')],
+                                     'create_dir': str(Path(profile) / 'skills')}})
+                existing = {'ledger': True, 'guard_agent_created': True,
+                            'external_dirs': ['/team/skills', str(Path(profile) / 'skills')]}
+                self.assertEqual(shared_user_skills({'skills': existing})['skills'],
+                                 {**existing, 'create_dir': str(Path(profile) / 'skills')})
+                with_custom = {**existing, 'create_dir': '/team/new-skills'}
+                self.assertEqual(shared_user_skills({'skills': with_custom})['skills'], with_custom)
+        with tempfile.TemporaryDirectory() as root:
+            profile = Path(root) / 'profile'
+            profile.mkdir()
+            (Path(root) / 'outside').mkdir()
+            (profile / 'skills').symlink_to(Path(root) / 'outside', target_is_directory=True)
+            with patch.dict(os.environ, {'HERMES_OMNIGENT_PROFILE': str(profile)}):
+                self.assertNotIn('create_dir', shared_user_skills({})['skills'])
 
     def test_native_home_answers_the_first_run_metrics_offer(self):
         from hermes_omnigent.compat import decline_shared_metrics

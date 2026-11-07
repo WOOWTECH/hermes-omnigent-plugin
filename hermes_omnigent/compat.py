@@ -256,11 +256,26 @@ def shared_local_model_config(config):
 
 
 def shared_user_skills(config):
-    """Let a per-session home see the profile's skills; the session home only seeds the bundled ones."""
+    """Share the profile's skill store with a native session, including newly created skills.
+
+    A native conversation has its own HERMES_HOME. Discovery alone is insufficient:
+    without create_dir, skill_manage writes new skills into that private home and
+    the next conversation cannot see them. Keep the profile's other skill policy
+    settings while adding its skills directory to discovery and creation.
+    """
     profile = os.environ.get('HERMES_OMNIGENT_PROFILE')
-    if not profile or not (Path(profile) / 'skills').is_dir():
+    profile_skills = Path(profile) / 'skills' if profile else None
+    if profile_skills is None or not profile_skills.is_dir():
         return config
-    return {**config, 'skills': {'external_dirs': [str(Path(profile) / 'skills')]}}
+    skills_dir = str(profile_skills.resolve())
+    skills = config.get('skills') if isinstance(config.get('skills'), dict) else {}
+    external = skills.get('external_dirs') if isinstance(skills.get('external_dirs'), list) else []
+    result = {**skills, 'external_dirs': [*external, *([] if skills_dir in external else [skills_dir])]}
+    # Existing skills may be intentionally shared through a different create_dir.
+    # Only choose the profile store when the user has not selected one.
+    if not result.get('create_dir') and not profile_skills.is_symlink():
+        result['create_dir'] = skills_dir
+    return {**config, 'skills': result}
 
 
 # The status bar the Hermes TUI draws under the input box, such as " ☤ deepseek-v4.1-flash · ctx -- · [░░░░░░░░░░] -- · 6s".
