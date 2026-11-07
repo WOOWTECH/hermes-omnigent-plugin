@@ -53,15 +53,23 @@ def resume_hermes_args(args, session_id):
     return result
 
 
+SLASH_COMMAND_GRACE_S = 3
+
+
 def await_hermes_message(db_path, baseline_id, content, timeout):
     """Confirm the submitted user text, never an unrelated assistant/control row."""
     expected = content.replace('\r\n', '\n').replace('\r', '\n').strip()
-    deadline = time.monotonic() + timeout
+    # Hermes expands a slash skill into other text and runs /model without any row, so the exact text never appears.
+    # Reporting that as a failed delivery would paste the command a second time.
+    is_command = expected.startswith('/')
+    deadline = time.monotonic() + (min(timeout, SLASH_COMMAND_GRACE_S) if is_command else timeout)
     while True:
         try:
             connection = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True, timeout=1)
             try:
                 rows = connection.execute("SELECT content FROM messages WHERE id > ? AND role = 'user' ORDER BY id LIMIT 1000", (baseline_id,))
+                if is_command and rows:
+                    return True
                 if any(isinstance(row[0], str) and row[0].replace('\r\n', '\n').strip() == expected for row in rows):
                     return True
             finally:
@@ -69,7 +77,7 @@ def await_hermes_message(db_path, baseline_id, content, timeout):
         except sqlite3.Error:
             pass
         if time.monotonic() >= deadline:
-            return False
+            return is_command
         time.sleep(.2)
 
 
@@ -245,6 +253,14 @@ def shared_local_model_config(config):
         return {**config, 'model': {**model, **connection}}
     except (OSError, ValueError, subprocess.TimeoutExpired):
         raise RuntimeError('HERMES_LOCAL_MODEL_UNAVAILABLE') from None
+
+
+def shared_user_skills(config):
+    """Let a per-session home see the profile's skills; the session home only seeds the bundled ones."""
+    profile = os.environ.get('HERMES_OMNIGENT_PROFILE')
+    if not profile or not (Path(profile) / 'skills').is_dir():
+        return config
+    return {**config, 'skills': {'external_dirs': [str(Path(profile) / 'skills')]}}
 
 
 def selected_hermes_model(home, session_id):

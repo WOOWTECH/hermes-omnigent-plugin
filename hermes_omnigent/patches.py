@@ -1,7 +1,7 @@
 """Exact source transformations of the pinned Omnigent release in the plugin-owned venv."""
 from pathlib import Path
 
-MARKER = '# hermes-omnigent-plugin compatibility v19'
+MARKER = '# hermes-omnigent-plugin compatibility v20'
 
 
 def make_edits(sdk, source_overrides=None):
@@ -56,12 +56,13 @@ def make_edits(sdk, source_overrides=None):
         anchor = '        "model",\n'
         if source.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
-        source = source.replace(anchor, '        "_config_version",\n' + anchor)
+        # The SDK already merges mcp_servers with its own bridge entry, but its key filter drops the user's servers first.
+        source = source.replace(anchor, '        "_config_version",\n        "mcp_servers",\n' + anchor)
         anchor = '    user_cfg = _load_user_hermes_config()\n'
         if source.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')
-        source = source.replace(anchor, '    from hermes_omnigent.compat import shared_local_model_config\n'
-            '    user_cfg = shared_local_model_config(_load_user_hermes_config())\n')
+        source = source.replace(anchor, '    from hermes_omnigent.compat import shared_local_model_config, shared_user_skills\n'
+            '    user_cfg = shared_user_skills(shared_local_model_config(_load_user_hermes_config()))\n')
         anchor = '            "command": sys.executable,\n'
         if source.count(anchor) != 1:
             raise Failure('OMNIGENT_COMPAT_ANCHOR_MISSING')

@@ -46,6 +46,24 @@ class CompatibilityTests(unittest.TestCase):
         exec(compile(ast.Module(body=[node], type_ignores=[]), '<config-keys>', 'exec'), namespace)
         self.assertIn('_config_version', namespace['_USER_CONFIG_KEYS'])
 
+    def test_native_home_inherits_the_users_mcp_servers(self):
+        source = next(after for file, before, after in patches.make_edits(self.sdk)
+                      if str(file).endswith('hermes_native/bridge.py'))
+        node = next(n for n in ast.parse(source).body if isinstance(n, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == '_USER_CONFIG_KEYS' for t in n.targets))
+        namespace = {}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), '<config-keys>', 'exec'), namespace)
+        self.assertIn('mcp_servers', namespace['_USER_CONFIG_KEYS'])
+
+    def test_native_home_sees_the_profiles_skills(self):
+        from hermes_omnigent.compat import shared_user_skills
+        with tempfile.TemporaryDirectory() as profile:
+            with patch.dict(os.environ, {'HERMES_OMNIGENT_PROFILE': profile}):
+                self.assertEqual(shared_user_skills({'model': 'm'}), {'model': 'm'})
+                (Path(profile) / 'skills').mkdir()
+                self.assertEqual(shared_user_skills({'model': 'm'}),
+                                 {'model': 'm', 'skills': {'external_dirs': [str(Path(profile) / 'skills')]}})
+
     def test_readiness_probes_hermes_aliases_once_and_allows_cold_start(self):
         source = next(after for file, before, after in patches.make_edits(self.sdk)
                       if str(file).endswith('onboarding/harness_readiness.py'))
@@ -239,6 +257,22 @@ class CompatibilityTests(unittest.TestCase):
         missing = self.sdk / 'missing.db'
         self.assertFalse(compat.await_hermes_message(missing, 0, 'message', 0))
         self.assertFalse(missing.exists())
+
+    def test_a_slash_command_is_delivered_once_with_or_without_a_transcript_row(self):
+        from hermes_omnigent import compat
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / 'state.db'
+            connection = sqlite3.connect(db)
+            connection.execute('CREATE TABLE messages (id INTEGER PRIMARY KEY, role TEXT, content TEXT)')
+            connection.commit()
+            with patch.object(compat, 'SLASH_COMMAND_GRACE_S', 0):
+                self.assertTrue(compat.await_hermes_message(db, 0, '/model glm', 5))
+            self.assertFalse(compat.await_hermes_message(db, 0, 'plain text', 0))
+            connection.execute("INSERT INTO messages (role, content) VALUES ('user', 'expanded skill prompt')")
+            connection.commit()
+            connection.close()
+            self.assertTrue(compat.await_hermes_message(db, 0, '/some-skill go', 5))
+            self.assertFalse(compat.await_hermes_message(db, 0, 'plain text', 0))
 
     def test_terminal_uses_explicit_palette_to_avoid_late_osc11_input(self):
         source = next(after for file, before, after in patches.make_edits(self.sdk)
