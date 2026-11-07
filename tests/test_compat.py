@@ -122,6 +122,12 @@ class CompatibilityTests(unittest.TestCase):
         self.assertGreaterEqual(waited, 90.0)
         self.assertLess(waited, 91.0)
 
+    def test_a_failing_capture_gets_no_extra_wait(self):
+        # No tmux server: the capture returns an empty string, which is not a slow start.
+        used, waited = self.settle('')
+        self.assertGreaterEqual(waited, 30.0)
+        self.assertLess(waited, 31.0)
+
     def test_the_bridge_asks_compat_whether_the_pane_is_ready(self):
         source = next(after for file, before, after in patches.make_edits(self.sdk)
                       if str(file).endswith('hermes_native/bridge.py'))
