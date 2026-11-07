@@ -1,8 +1,21 @@
 # Hermes Omnigent 候選版驗收紀錄
 
-版本：v0.1.0-rc.16 候選版。驗收更新：2026-11-02 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
+版本：v0.1.0-rc.17 候選版。驗收更新：2026-11-07 UTC。公開來源：WOOWTECH/hermes-omnigent-plugin。
 
 指定主站 Hermes 0.22.5／Linux x64 容器已在使用者明確同意直接執行後通過連線、模型選擇與真實對話驗證。其他平台、引擎及多人負載仍需驗收，維持候選版。
+
+## rc.17 發布範圍：Omnigent 對話沿用 profile 的 MCP、skills 與斜線指令，對話裡關閉背景審查
+
+帶上 2026-11-07 合併的 #16 與 #17。私有 Omnigent 仍固定 0.20.0，補丁世代由 v19 改為 v21。
+
+- 改了什麼（#16）：每個對話的家目錄保留 profile 設定裡的 `mcp_servers`（SDK 本來就會把它和自己的橋接項目合併，先前是被 `_USER_CONFIG_KEYS` 濾掉）；profile 的 `skills` 目錄加成 `skills.external_dirs`；斜線指令只要出現任何新的 user 列、或過了 3 秒寬限就算送達，不再重貼一次。
+- 改了什麼（#17）：對話家目錄設 `auxiliary.background_review.enabled: false`。#16 讓對話看得到 profile 的 skills 之後，背景審查可能改寫這些 skills，紀錄卻留在對話家目錄，主帳本看不到；只關 `skills.creation_nudge_interval` 不夠，因為記憶審查仍把 `skill_manage` 留在白名單。明確要求的 `skill_manage` 與記憶操作照常可用。
+- 安全：對話現在會啟動 profile 的 MCP 伺服器。這些對話本來就拿到 profile 的 `.env` 與 `auth.json` 副本，所以沒有新增憑證存取。更新器的安全掃描閘門對 rc.16 是 0 個新發現（38＝38，用的是租戶上同一份 `plugin_guard.py`）；`plugin.yaml` 除版本外不變，也沒有新的依賴檔。
+- 租戶上會發生什麼：外掛更新後重載時，相容層看到世代不同，就在同一個 0.20.0 runtime 上重新修補 7 個檔案（不重裝 runtime、不增加資料量），登入、驗證收據與直接執行同意都保留。
+- 驗證（#16／#17 的作者）：Omnigent 0.20.0 搭 Omnigent Web，各 50 輪真實對話，包括 MCP 呼叫、自訂與內建 skills、斜線 skill 只跑一次、`/model` 切換。#17 另在 HA add-on 映像 0.1.14 搭本機 Omnigent 0.20.0 伺服器跑 48/50，Paseo Web 回歸 49/50；三次失誤經查與本次改動無關，見 #17。CI 的單元測試（Python 3.12／3.13／3.14）與 server 0.16.0／0.19.1／0.20.0 契約全綠。
+- 驗證（發版前，本機，沒有動任何租戶）：就地升級演練（真的 uv，同一個插件目錄原地更新）由 rc.16 的 v19 收據升到 0.20.0／v21／7 檔，再跑一次不變，七個修補檔都可匯入，模型清單路由仍有保護。
+- 未涵蓋（發版時）：實體 HAOS 裝置（#17 測試時連不上，add-on 映像是在一般容器裡跑，沒有 HA ingress 與 Supervisor）；0.20.0 以外的 Omnigent 版本上的真實對話；PaaS 租戶上的真實對話（發版後先在測試台手動觸發更新並跑真實對話驗證，通過才更新正式台）。
+- 已知未修（見 #16／#17）：Web UI 的斜線指令泡泡順序錯，之後側欄一直顯示執行中；Web UI 沒有 Hermes 的模型選擇器，只能用 `/model`；對話裡的 agent 仍可改 profile 的 skills，這些改動也不在主帳本；Omnigent 對話裡的 `/refine` 回報已開始，但沒有呼叫模型。
 
 ## rc.16 發布範圍：私有 Omnigent 由 0.19.1 升到 0.20.0
 
