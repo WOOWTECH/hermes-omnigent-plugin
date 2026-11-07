@@ -132,7 +132,7 @@ class CompatibilityTests(unittest.TestCase):
         source = next(after for file, before, after in patches.make_edits(self.sdk)
                       if str(file).endswith('hermes_native/bridge.py'))
         self.assertIn('settle_hermes_pane(lambda: _capture_pane(socket_path, tmux_target)', source)
-        compile(source, 'bridge.py', 'exec')
+        ast.parse(source)
 
     def test_native_home_turns_background_review_off(self):
         from hermes_omnigent.compat import no_background_review
